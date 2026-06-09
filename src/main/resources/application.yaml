@@ -60,3 +60,9 @@ app:
 
 logging:
   config: classpath:logback-spring.xml
+
+jwt:
+  secret-key: ${JWT_SECRET_KEY:assembly-service-local-jwt-secret-key-must-be-at-least-32-bytes}
+  expiration:
+    access: ${JWT_ACCESS_EXPIRATION:3600000}
+    refresh: ${JWT_REFRESH_EXPIRATION:1209600000}
