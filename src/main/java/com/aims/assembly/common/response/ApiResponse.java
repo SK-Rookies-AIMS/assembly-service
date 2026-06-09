@@ -23,7 +23,7 @@ public class ApiResponse<T> {
     @Schema(description = "응답 데이터")
     private final T data;
 
-    @Schema(description = "응답 메시지", example = "로그인 성공")
+    @Schema(description = "응답 메시지", example = "요청이 성공했습니다.")
     private final String message;
 
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
