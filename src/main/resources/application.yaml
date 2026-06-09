@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: ${APP_NAME:assembly}
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  cache:
+    type: redis
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: ${REDIS_TIMEOUT:3s}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+management:
+  health:
+    redis:
+      enabled: false
+    kafka:
+      enabled: false
+
+app:
+  datasource:
+    main:
+      driver-class-name: ${MAIN_DB_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
+      jdbc-url: ${MAIN_DB_JDBC_URL:jdbc:mysql://localhost:3306/maindb?serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
+      username: ${MAIN_DB_USERNAME:root}
+      password: ${MAIN_DB_PASSWORD:root}
+      maximum-pool-size: ${MAIN_DB_MAXIMUM_POOL_SIZE:10}
+      minimum-idle: ${MAIN_DB_MINIMUM_IDLE:2}
+      pool-name: ${MAIN_DB_POOL_NAME:main-db-pool}
+    sample:
+      driver-class-name: ${SAMPLE_DB_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
+      jdbc-url: ${SAMPLE_DB_JDBC_URL:jdbc:mysql://localhost:3306/sampledb?serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
+      username: ${SAMPLE_DB_USERNAME:root}
+      password: ${SAMPLE_DB_PASSWORD:root}
+      maximum-pool-size: ${SAMPLE_DB_MAXIMUM_POOL_SIZE:5}
+      minimum-idle: ${SAMPLE_DB_MINIMUM_IDLE:1}
+      pool-name: ${SAMPLE_DB_POOL_NAME:sample-db-pool}
+  redis:
+    cache:
+      ttl: ${REDIS_CACHE_TTL:10m}
+  opensearch:
+    scheme: ${OPENSEARCH_SCHEME:http}
+    host: ${OPENSEARCH_HOST:localhost}
+    port: ${OPENSEARCH_PORT:9200}
+  kafka:
+    bootstrap-servers:
+      - ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    group-id: ${KAFKA_GROUP_ID:assembly-local}
+    auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:earliest}
+
+logging:
+  config: classpath:logback-spring.xml

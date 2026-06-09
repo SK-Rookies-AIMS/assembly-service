@@ -1,0 +1,36 @@
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: ${REDIS_TIMEOUT:3s}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+app:
+  redis:
+    cache:
+      ttl: ${REDIS_CACHE_TTL:30m}
+  opensearch:
+    scheme: ${OPENSEARCH_SCHEME:http}
+    host: ${OPENSEARCH_HOST:localhost}
+    port: ${OPENSEARCH_PORT:9200}
+  kafka:
+    bootstrap-servers:
+      - ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    group-id: ${KAFKA_GROUP_ID:assembly-prod}
+    auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:latest}
+
+logging:
+  level:
+    root: warn
+    com.aims.assembly: info
+  file:
+    path: ${LOG_PATH:logs/prod}
+
+management:
+  health:
+    redis:
+      enabled: false
+    kafka:
+      enabled: false
