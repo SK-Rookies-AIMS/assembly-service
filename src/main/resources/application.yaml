@@ -21,9 +21,12 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
 management:
+  endpoint:
+    health:
+      show-details: always
   health:
     redis:
-      enabled: false
+      enabled: true
     kafka:
       enabled: false
 
