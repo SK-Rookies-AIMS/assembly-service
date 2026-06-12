@@ -32,6 +32,6 @@ logging:
 management:
   health:
     redis:
-      enabled: false
+      enabled: true
     kafka:
       enabled: false

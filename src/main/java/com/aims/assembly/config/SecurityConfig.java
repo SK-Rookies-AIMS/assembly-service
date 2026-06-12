@@ -37,10 +37,14 @@ public class SecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler)
                 )
                 .authorizeHttpRequests(auth -> auth
+                        // Temporary permitAll for SampleDB source-data API testing until login/JWT integration is connected.
+                        .requestMatchers("/api/process/events/**").permitAll()
+                        .requestMatchers("/api/process/sample").permitAll()
                         .requestMatchers(
                                 "/",
+                                "/api/process/health",
                                 "/api/test",
-                                "/actuator/health",
+                                "/actuator/health/**",
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",
                                 "/swagger-resources/**",
