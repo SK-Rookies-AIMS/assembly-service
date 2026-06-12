@@ -13,3 +13,14 @@ management:
       enabled: true
     kafka:
       enabled: false
+
+app:
+  datasource:
+    main:
+      jdbc-url: ${MAIN_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/maindb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8}
+      username: ${MAIN_DB_USERNAME:admin}
+      password: ${MAIN_DB_PASSWORD:}
+    sample:
+      jdbc-url: ${SAMPLE_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/sampledb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8}
+      username: ${SAMPLE_DB_USERNAME:admin}
+      password: ${SAMPLE_DB_PASSWORD:}

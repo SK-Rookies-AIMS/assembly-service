@@ -74,6 +74,12 @@ public class ExceptionAdvice extends ResponseEntityExceptionHandler {
         return handleError(ErrorStatus.FORBIDDEN, null);
     }
 
+    @ExceptionHandler(ProcessEventException.class)
+    public ResponseEntity<Object> handleProcessEventException(ProcessEventException exception) {
+        ApiResponse<Object> body = ApiResponse.failure(exception.getMessage(), null);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handleException(Exception exception) {
         log.error("Unhandled exception", exception);
