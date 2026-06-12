@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 public class PaintAnalysisResult {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(name = "manufacturing_event_id")

@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 public class BodyAnalysisResult {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(name = "manufacturing_event_id")
