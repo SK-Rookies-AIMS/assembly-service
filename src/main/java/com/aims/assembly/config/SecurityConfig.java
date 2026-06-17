@@ -42,7 +42,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/process/sample").permitAll()
                         .requestMatchers(
                                 "/",
-                                "/api/test",
+                                "/api/process/health",
                                 "/actuator/health/**",
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",

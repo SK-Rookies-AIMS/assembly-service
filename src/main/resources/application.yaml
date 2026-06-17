@@ -1,4 +1,9 @@
+server:
+  port: 8082
+
 spring:
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: ${APP_NAME:assembly}
   profiles:
