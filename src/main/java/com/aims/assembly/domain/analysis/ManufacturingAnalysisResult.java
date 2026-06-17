@@ -1,11 +1,11 @@
 package com.aims.assembly.domain.analysis;
 
-import com.aims.assembly.domain.car.CarMaster;
+import com.aims.assembly.domain.commons.BaseEntity;
 import com.aims.assembly.domain.enums.ProcessCode;
+import com.aims.assembly.domain.enums.Severity;
 import jakarta.persistence.*;
 import lombok.*;
 
-import javax.print.attribute.standard.Severity;
 import java.time.LocalDateTime;
 
 @Entity
@@ -15,29 +15,26 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ManufacturingAnalysisResult {
+public class ManufacturingAnalysisResult extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
     private Long id; // 분석 결과 PK
 
-    @Column(name = "analysis_id", length = 100, nullable = false, unique = true)
-    private String analysisId; // 분석 결과 ID
+    @Column(name = "analysis_id", length = 100, nullable = false)
+    private String analysisId; // 분석 ID, Kafka/분석 추적용 컬럼
 
     @Column(name = "event_id", length = 100, nullable = false)
     private String eventId; // 원천 이벤트 ID
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "car_master_id", nullable = false)
-    private CarMaster carMaster; // 차량 마스터
+    @Column(name = "car_master_id", nullable = false)
+    private Long carMasterId; // 차량 마스터 ID
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "equipment_id", nullable = false)
-    private Equipment equipment; // 설비
+    @Column(name = "equipment_id", nullable = false)
+    private Long equipmentId; // 설비 ID
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "process_code", nullable = false, length = 20)
+    @Column(name = "process_code", length = 20, nullable = false)
     private ProcessCode processCode; // 공정 코드
 
     @Column(name = "event_time", nullable = false)
@@ -61,17 +58,4 @@ public class ManufacturingAnalysisResult {
 
     @Column(name = "analyzed_at")
     private LocalDateTime analyzedAt; // 분석 수행 시간
-
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt; // 생성 시각
-
-    @PrePersist
-    protected void onCreate() {
-        if (createdAt == null) {
-            createdAt = LocalDateTime.now();
-        }
-        if (analyzedAt == null) {
-            analyzedAt = LocalDateTime.now();
-        }
-    }
 }
