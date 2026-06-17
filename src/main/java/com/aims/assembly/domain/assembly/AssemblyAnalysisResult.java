@@ -1,5 +1,6 @@
 package com.aims.assembly.domain.assembly;
 
+import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -15,48 +16,26 @@ import java.time.LocalDateTime;
 public class AssemblyAnalysisResult {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "analysis_result_id")
+    private Long analysisResultId; // 공통 분석 결과 ID, PK 겸 FK
 
-    @Column(name = "manufacturing_event_id")
-    private Long manufacturingEventId;
+    @Column(name = "expected_sequence", length = 500)
+    private String expectedSequence; // 기준 작업 순서
 
-    @Column(name = "car_master_id")
-    private Long carMasterId;
-
-    @Column(name = "process_code")
-    private String processCode;
-
-    @Column(name = "equipment_code")
-    private String equipmentCode;
-
-    @Column(name = "operation_rate")
-    private Double operationRate;
-
-    @Column(name = "assembly_sequence_status")
-    private String assemblySequenceStatus;
-
-    @Column(name = "missing_part_count")
-    private Integer missingPartCount;
-
-    @Column(name = "fastening_error_count")
-    private Integer fasteningErrorCount;
+    @Column(name = "actual_sequence", length = 500)
+    private String actualSequence; // 실제 작업 순서
 
     @Column(name = "sequence_error_count")
-    private Integer sequenceErrorCount;
+    private Integer sequenceErrorCount; // 작업 순서 오류 수
 
-    @Column(name = "threshold_value")
-    private Double thresholdValue;
+    @Column(name = "missing_part_count")
+    private Integer missingPartCount; // 누락 부품 수
 
-    @Column(name = "is_abnormal")
-    private Boolean isAbnormal;
+    @Column(name = "fastening_error_count")
+    private Integer fasteningErrorCount; // 체결 오류 수
 
-    @Column(name = "abnormal_type")
-    private String abnormalType;
-
-    @Column(name = "risk_score")
-    private Double riskScore;
-
-    @Column(name = "analyzed_at")
-    private LocalDateTime analyzedAt;
+    @OneToOne(fetch = FetchType.LAZY)
+    @MapsId
+    @JoinColumn(name = "analysis_result_id", nullable = false)
+    private ManufacturingAnalysisResult analysisResult;
 }
