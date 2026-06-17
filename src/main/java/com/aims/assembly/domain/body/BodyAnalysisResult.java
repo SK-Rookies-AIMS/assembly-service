@@ -5,6 +5,13 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 
+@Entity
+@Table(name = "body_analysis_result")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class BodyAnalysisResult {
 
     @Id
