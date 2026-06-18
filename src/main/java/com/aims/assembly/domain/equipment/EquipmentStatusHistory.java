@@ -11,8 +11,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "equipment_status_history")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class EquipmentStatusHistory extends BaseEntity {

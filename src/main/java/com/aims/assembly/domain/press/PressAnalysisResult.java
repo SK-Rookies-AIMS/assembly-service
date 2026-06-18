@@ -9,8 +9,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "press_analysis_result")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class PressAnalysisResult {

@@ -25,8 +25,7 @@ import java.time.LocalDateTime;
         }
 )
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class ManufacturingEventJson extends BaseEntity {

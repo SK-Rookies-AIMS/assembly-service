@@ -8,8 +8,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "product_process_history")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class ProductProcessHistory {
