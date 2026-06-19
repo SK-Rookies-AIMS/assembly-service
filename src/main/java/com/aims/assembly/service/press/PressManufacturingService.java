@@ -1,9 +1,10 @@
-package com.aims.assembly.service.manufacturing;
+package com.aims.assembly.service.press;
 
 import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.kafka.ManufacturingEventAnalyzer;
 import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
+import com.aims.assembly.service.manufacturing.ManufacturingProcessHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

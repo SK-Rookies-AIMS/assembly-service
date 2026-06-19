@@ -8,7 +8,6 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
@@ -111,9 +110,9 @@ public class KafkaConfig {
         // MSK IAM 또는 로컬 Kafka 공통 보안 속성 적용
         Map<String, Object> properties = commonProperties();
 
-        // Consumer broker, 기본 그룹, 초기 offset 정책 설정
+        // Consumer broker와 초기 offset 정책 설정
+        // 각 Listener의 Consumer Group은 @KafkaListener groupId에서 명시적으로 관리
         properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaCustomProperties.getBootstrapServers());
-        properties.put(ConsumerConfig.GROUP_ID_CONFIG, kafkaCustomProperties.getGroupId());
         properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, kafkaCustomProperties.getAutoOffsetReset());
 
         // Listener 처리 완료 이후 offset 커밋을 위한 자동 커밋 비활성화

@@ -3,6 +3,7 @@ package com.aims.assembly.kafka;
 import com.aims.assembly.common.status.KafkaErrorStatus;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.kafka.model.KafkaPublishResult;
+import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
 import com.aims.assembly.properties.KafkaCustomProperties;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository.StoredManufacturingEvent;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
 
 /**
  * 실제 Kafka broker 대신 KafkaTemplate Mock을 사용한 Producer 단위 테스트.
@@ -49,6 +51,57 @@ class ManufacturingKafkaProducerTest {
 
     @Mock
     private KafkaMessageTraceStore traceStore;
+
+    @Test
+    @DisplayName("불량 전이 분석은 carId를 message key로 사용")
+    void usesCarIdForDefectTransferAnalysis() {
+        ManufacturingKafkaProducer producer =
+                new ManufacturingKafkaProducer(
+                        kafkaTemplate,
+                        objectMapper,
+                        new KafkaCustomProperties(),
+                        traceStore
+                );
+        ManufacturingAnalysisEvent event = mock(ManufacturingAnalysisEvent.class);
+        when(event.analysisType()).thenReturn("DEFECT_TRANSFER_PREDICTION");
+        when(event.carId()).thenReturn("CAR-000001");
+
+        assertThat(producer.analysisMessageKey(event)).isEqualTo("CAR-000001");
+    }
+
+    @Test
+    @DisplayName("불량 전이 분석의 carId가 없으면 carMasterId를 message key로 사용")
+    void fallsBackToCarMasterIdWhenCarIdIsMissing() {
+        ManufacturingKafkaProducer producer =
+                new ManufacturingKafkaProducer(
+                        kafkaTemplate,
+                        objectMapper,
+                        new KafkaCustomProperties(),
+                        traceStore
+                );
+        ManufacturingAnalysisEvent event = mock(ManufacturingAnalysisEvent.class);
+        when(event.analysisType()).thenReturn("DEFECT_TRANSFER_PREDICTION");
+        when(event.carMasterId()).thenReturn(701L);
+
+        assertThat(producer.analysisMessageKey(event)).isEqualTo("CAR_MASTER-701");
+    }
+
+    @Test
+    @DisplayName("불량 전이 분석의 차량 식별자가 모두 없으면 equipmentCode를 사용")
+    void fallsBackToEquipmentCodeWhenVehicleIdentifiersAreMissing() {
+        ManufacturingKafkaProducer producer =
+                new ManufacturingKafkaProducer(
+                        kafkaTemplate,
+                        objectMapper,
+                        new KafkaCustomProperties(),
+                        traceStore
+                );
+        ManufacturingAnalysisEvent event = mock(ManufacturingAnalysisEvent.class);
+        when(event.analysisType()).thenReturn("DEFECT_TRANSFER_PREDICTION");
+        when(event.equipmentCode()).thenReturn("EQ_PRESS_001");
+
+        assertThat(producer.analysisMessageKey(event)).isEqualTo("EQ_PRESS_001");
+    }
 
     @Test
     @DisplayName("raw 이벤트 발행 시 equipmentCode를 message key로 사용")

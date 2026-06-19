@@ -46,7 +46,6 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
     consumer:
-      group-id: ${KAFKA_GROUP_ID:assembly-group}
       auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:earliest}
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -91,7 +90,6 @@ app:
 
   kafka:
     bootstrap-servers: ${MSK_BOOTSTRAP_SERVERS}
-    group-id: ${KAFKA_GROUP_ID:assembly-dev}
     auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:earliest}
     listeners-enabled: ${KAFKA_LISTENERS_ENABLED:true}
     scheduler:
