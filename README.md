@@ -169,28 +169,76 @@ SampleDB의 제조 이벤트를 재생하고 공정 분석, AI 분석, 설비 �
 
 ### 전체 처리 흐름
 
+```mermaid
+flowchart TD
+    DB[SampleDB<br/>manufacturing_event_json]
+
+    subgraph RAW_PRODUCERS[Raw Producers]
+        API[Kafka Test API]
+        SCHEDULER[ManufacturingEventReplayScheduler]
+        SEND_RAW[ManufacturingKafkaProducer.sendRaw]
+    end
+
+    RAW_TOPIC[["Topic: factory.manufacturing.raw<br/>Partitions: 2<br/>Key: equipmentCode"]]
+
+    MANUFACTURING_GROUP["manufacturing-consumer-group<br/>concurrency: 2<br/>processCode 기반 공정 분석<br/>PRESS / BODY / PAINT / ASSEMBLY"]
+    AI_GROUP["ai-consumer-group<br/>concurrency: 2<br/>병목 분석<br/>불량 전이 예측"]
+
+    ANALYSIS_PRODUCER["ManufacturingKafkaProducer.sendAnalysis"]
+    ANALYSIS_TOPIC[["Topic: factory.manufacturing.analysis<br/>Partitions: 2<br/>기본 Key: equipmentCode<br/>불량 전이 Key: carId"]]
+
+    EQUIPMENT_GROUP["equipment-consumer-group<br/>concurrency: 2<br/>설비 상태 및 가동률 이벤트 생성"]
+    ALERT_ANALYSIS_GROUP["alert-analysis-consumer-group<br/>concurrency: 2<br/>위험 조건 및 이상 여부 판정"]
+
+    EQUIPMENT_PRODUCER["ManufacturingKafkaProducer.sendEquipment"]
+    ALERT_PRODUCER["ManufacturingKafkaProducer.sendAlert"]
+
+    EQUIPMENT_TOPIC[["Topic: factory.manufacturing.equipment<br/>Partitions: 2<br/>Key: equipmentCode"]]
+    ALERT_TOPIC[["Topic: factory.manufacturing.alert<br/>Partitions: 2<br/>Key: equipmentCode"]]
+
+    DASHBOARD_GROUP["dashboard-consumer-group<br/>concurrency: 2<br/>설비 상태 이벤트 소비<br/>현재 로그 및 추적 이력 기록"]
+    NOTIFICATION_GROUP["alert-notification-consumer-group<br/>concurrency: 2<br/>실시간 알림 이벤트 소비<br/>현재 로그 및 추적 이력 기록"]
+
+    DB --> API
+    DB --> SCHEDULER
+    API --> SEND_RAW
+    SCHEDULER --> SEND_RAW
+    SEND_RAW --> RAW_TOPIC
+
+    RAW_TOPIC --> MANUFACTURING_GROUP
+    RAW_TOPIC --> AI_GROUP
+
+    MANUFACTURING_GROUP -->|PROCESS_RISK_ANALYSIS| ANALYSIS_PRODUCER
+    AI_GROUP -->|BOTTLENECK_ANALYSIS| ANALYSIS_PRODUCER
+    AI_GROUP -->|DEFECT_TRANSFER_PREDICTION| ANALYSIS_PRODUCER
+    ANALYSIS_PRODUCER --> ANALYSIS_TOPIC
+
+    ANALYSIS_TOPIC --> EQUIPMENT_GROUP
+    ANALYSIS_TOPIC --> ALERT_ANALYSIS_GROUP
+
+    EQUIPMENT_GROUP --> EQUIPMENT_PRODUCER
+    EQUIPMENT_PRODUCER --> EQUIPMENT_TOPIC
+    EQUIPMENT_TOPIC --> DASHBOARD_GROUP
+
+    ALERT_ANALYSIS_GROUP -->|위험 조건 충족| ALERT_PRODUCER
+    ALERT_PRODUCER --> ALERT_TOPIC
+    ALERT_TOPIC --> NOTIFICATION_GROUP
+```
+
+이 구조에서 Producer와 Consumer는 고정된 하나의 애플리케이션을 의미하지 않습니다. Consumer가 메시지를 처리한 후 다음 Topic의 Producer 역할을 이어서 수행합니다.
+
 ```text
-sampledb.manufacturing_event_json
-        │
-        │ Test API 또는 Scheduler
-        ▼
-factory.manufacturing.raw
-        ├─ manufacturing-consumer-group
-        │    └─ PROCESS_RISK_ANALYSIS
-        │
-        └─ ai-consumer-group
-             ├─ BOTTLENECK_ANALYSIS
-             └─ DEFECT_TRANSFER_PREDICTION
-                        │
-                        ▼
-factory.manufacturing.analysis
-        ├─ equipment-consumer-group
-        │    └─ factory.manufacturing.equipment
-        │           └─ dashboard-consumer-group
-        │
-        └─ alert-analysis-consumer-group
-             └─ 위험 조건 충족 시 factory.manufacturing.alert
-                    └─ alert-notification-consumer-group
+Test API / Scheduler
+  └─ Raw Producer
+
+Manufacturing Consumer / AI Consumer
+  └─ Analysis Producer
+
+Equipment Consumer
+  └─ Equipment Producer
+
+Alert Analysis Consumer
+  └─ Alert Producer
 ```
 
 Raw 이벤트 1건은 서로 다른 Consumer Group에서 독립적으로 소비됩니다.
@@ -397,26 +445,90 @@ curl http://localhost:8082/api/kafka/manufacturing/broker
 
 ```text
 com.aims.assembly
+ ├── AssemblyApplication       # 애플리케이션 시작점 및 Scheduling 활성화
  ├── common
- │   ├── code          # 공통 성공/에러 코드 DTO 및 인터페이스
- │   ├── response      # 공통 API 응답
- │   └── status        # 공통 성공/에러 상태 enum
- ├── config            # Spring 설정
- │   ├── DataSourceConfig
- │   ├── KafkaConfig
- │   ├── OpenSearchConfig
- │   ├── QueryDSLConfig
+ │   ├── code                  # 공통 성공/에러 코드 DTO 및 인터페이스
+ │   ├── response              # 공통 API 응답
+ │   └── status
+ │       └── KafkaErrorStatus  # Kafka 전용 에러 코드
+ ├── config
+ │   ├── KafkaConfig           # Topic, Producer, Consumer, Offset Commit 설정
+ │   ├── DataSourceConfig      # Main DB와 SampleDB DataSource 설정
  │   ├── RedisCacheConfig
+ │   ├── OpenSearchConfig
+ │   ├── JpaConfig
+ │   ├── QueryDSLConfig
+ │   ├── SecurityConfig
  │   ├── SwaggerConfig
- │   └── WebConfig
- ├── controller        # API Controller
- ├── domain            # 공통 Entity 기반 클래스 및 향후 JPA Entity
- ├── dto               # 요청/응답 DTO
- ├── exception         # 전역 예외 처리 및 비즈니스 예외
- ├── mapper            # Entity/Model -> DTO 변환
- ├── properties        # application.yaml 바인딩 설정 클래스
- ├── repository        # 데이터 접근 계층
- └── service           # 비즈니스 로직 계층
+ │   ├── WebConfig
+ │   ├── jwt
+ │   └── security
+ ├── controller
+ │   ├── kafka
+ │   │   └── ManufacturingKafkaTestController
+ │   │       # Kafka 발행, 메시지 추적, broker 진단 API
+ │   ├── process              # 제조 데이터 조회 API
+ │   └── HealthCheckController
+ ├── domain
+ │   ├── event
+ │   │   └── ManufacturingEventJson
+ │   ├── analysis
+ │   ├── equipment
+ │   ├── press
+ │   ├── body
+ │   ├── paint
+ │   ├── assembly
+ │   ├── process
+ │   ├── car
+ │   ├── enums
+ │   └── commons
+ ├── kafka
+ │   ├── ManufacturingKafkaProducer
+ │   │   # Raw, Analysis, Equipment, Alert Topic 메시지 발행
+ │   ├── ManufacturingKafkaConsumer
+ │   │   # Consumer Group별 메시지 소비와 후속 Topic 발행
+ │   ├── ManufacturingEventAnalyzer
+ │   │   # 공정 위험, 병목, 불량 전이 분석 및 이벤트 변환
+ │   ├── KafkaMessageTraceStore
+ │   │   # 현재 인스턴스의 최근 Kafka 송수신 이력 저장
+ │   ├── KafkaDiagnosticsService
+ │   │   # Kafka/MSK 연결, broker, Topic Partition 진단
+ │   └── model
+ │       ├── ManufacturingRawEvent
+ │       ├── ManufacturingAnalysisEvent
+ │       ├── EquipmentStatusEvent
+ │       ├── ManufacturingAlertEvent
+ │       └── KafkaPublishResult
+ ├── service
+ │   ├── manufacturing
+ │   │   ├── ManufacturingRawEventService
+ │   │   │   # SampleDB 이벤트 단건·배치 Kafka 발행
+ │   │   ├── ManufacturingEventReplayScheduler
+ │   │   │   # 미전송 이벤트 주기적 자동 재생
+ │   │   ├── ManufacturingProcessRouter
+ │   │   │   # processCode 기반 공정 Handler 선택
+ │   │   ├── ManufacturingProcessHandler
+ │   │   ├── PressManufacturingService
+ │   │   ├── BodyManufacturingService
+ │   │   ├── PaintManufacturingService
+ │   │   └── AssemblyManufacturingService
+ │   └── process
+ ├── repository
+ │   ├── event
+ │   │   └── ManufacturingEventJsonRepository
+ │   │       # SampleDB 미전송 이벤트 조회 및 전송 상태 갱신
+ │   └── process
+ ├── properties
+ │   ├── KafkaCustomProperties # Kafka, Topic, Scheduler 설정 바인딩
+ │   ├── AppDataSourceProperties
+ │   ├── RedisCacheProperties
+ │   ├── OpenSearchProperties
+ │   └── CorsProperties
+ ├── dto                       # 요청/응답 DTO
+ ├── exception
+ │   └── KafkaException        # Kafka 비즈니스 예외
+ ├── mapper                    # Entity/Model → DTO 변환
+ └── utils
 ```
 
 ## 현재 기본 설정
