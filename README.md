@@ -102,9 +102,7 @@ DB는 `sampledb`와 `maindb`로 분리합니다. 두 DB는 같은 MySQL 서버�
 
 - `car_master`: 차량 기준 정보
 - `equipment`: 샘플 설비 정보
-- `manufacturing_event`: 공정/센서/품질 공통 이벤트
-- `thermal_vision`: 열화상 품질 샘플 데이터
-- `robot_arm_vibration`: 로봇팔 진동 원본 데이터
+- `manufacturing_event_json`: 공정/센서/품질 공통 이벤트
 
 ### maindb
 
@@ -112,7 +110,6 @@ DB는 `sampledb`와 `maindb`로 분리합니다. 두 DB는 같은 MySQL 서버�
 
 주요 테이블:
 
-- `product_process_history`: 차량별 공정 이동 이력
 - `press_analysis_result`: 프레스 공정 분석 결과
 - `body_analysis_result`: 차체 공정 분석 결과
 - `paint_analysis_result`: 도장 공정 분석 결과
