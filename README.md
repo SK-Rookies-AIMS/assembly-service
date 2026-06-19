@@ -135,14 +135,16 @@ DB는 `sampledb`와 `maindb`로 분리합니다. 두 DB는 같은 MySQL 서버�
 
 ### Kafka
 
-제조 이벤트 스트리밍에 사용합니다.
+SampleDB의 제조 이벤트를 재생하고 공정 분석, AI 분석, 설비 상태, 위험 알림을 비동기로 전달하는 이벤트 백본으로 사용합니다.
 
-예시 Topic:
+현재 사용하는 Topic은 다음과 같으며 모두 Partition 2개로 구성합니다.
 
-- `raw-current-topic`
-- `virtual-acceleration-topic`
-- `manufacturing-event-topic`
-- `analysis-result-topic`
+| Topic | 역할 | Message Key | Partition |
+| --- | --- | --- | ---: |
+| `factory.manufacturing.raw` | SampleDB 원천 제조 이벤트 | `equipmentCode` | 2 |
+| `factory.manufacturing.analysis` | 공정 위험, 병목, 불량 전이 분석 결과 | 기본 `equipmentCode`, 불량 전이는 `carId` | 2 |
+| `factory.manufacturing.equipment` | 설비 상태와 가동률 이벤트 | `equipmentCode` | 2 |
+| `factory.manufacturing.alert` | 위험 조건을 만족한 알림 이벤트 | `equipmentCode` | 2 |
 
 ### Redis
 
@@ -165,6 +167,232 @@ DB는 `sampledb`와 `maindb`로 분리합니다. 두 DB는 같은 MySQL 서버�
 - 불량 이력 검색
 - 차량별 제조 이력 검색
 - 센서 트렌드 집계
+
+## Kafka 제조 이벤트 파이프라인
+
+### 전체 처리 흐름
+
+```text
+sampledb.manufacturing_event_json
+        │
+        │ Test API 또는 Scheduler
+        ▼
+factory.manufacturing.raw
+        ├─ manufacturing-consumer-group
+        │    └─ PROCESS_RISK_ANALYSIS
+        │
+        └─ ai-consumer-group
+             ├─ BOTTLENECK_ANALYSIS
+             └─ DEFECT_TRANSFER_PREDICTION
+                        │
+                        ▼
+factory.manufacturing.analysis
+        ├─ equipment-consumer-group
+        │    └─ factory.manufacturing.equipment
+        │           └─ dashboard-consumer-group
+        │
+        └─ alert-analysis-consumer-group
+             └─ 위험 조건 충족 시 factory.manufacturing.alert
+                    └─ alert-notification-consumer-group
+```
+
+Raw 이벤트 1건은 서로 다른 Consumer Group에서 독립적으로 소비됩니다.
+
+- `manufacturing-consumer-group`: `processCode`에 따라 PRESS, BODY, PAINT, ASSEMBLY 공정 분석을 수행하고 `PROCESS_RISK_ANALYSIS` 결과를 발행합니다.
+- `ai-consumer-group`: 병목 분석인 `BOTTLENECK_ANALYSIS`와 불량 전이 예측인 `DEFECT_TRANSFER_PREDICTION` 결과를 각각 발행합니다.
+- 따라서 정상 처리 시 Raw 이벤트 1건에서 Analysis 이벤트 3건이 생성됩니다.
+- 각 Analysis 이벤트는 설비 상태 이벤트로 변환되므로 Equipment 이벤트도 Analysis 건수만큼 생성됩니다.
+- Alert 이벤트는 모든 Analysis 이벤트에서 생성되지 않고 위험 조건을 만족할 때만 생성됩니다.
+
+### Topic별 Producer와 Consumer Group
+
+Producer는 Kafka Topic에 메시지를 발행하는 주체이며 Consumer Group에 속하지 않습니다. 따라서 송수신 추적 API에서 `direction=PRODUCED`인 항목의 `consumerGroup`이 `null`인 것은 정상입니다.
+
+| Topic | Producer | Consumer Group | Consumer 처리 내용 |
+| --- | --- | --- | --- |
+| `factory.manufacturing.raw` | Test API, `ManufacturingEventReplayScheduler` | `manufacturing-consumer-group` | 공정별 위험 분석 후 `PROCESS_RISK_ANALYSIS` 발행 |
+| `factory.manufacturing.raw` | Test API, `ManufacturingEventReplayScheduler` | `ai-consumer-group` | 병목 분석과 불량 전이 예측 결과 발행 |
+| `factory.manufacturing.analysis` | Manufacturing Consumer, AI Consumer | `equipment-consumer-group` | Analysis를 설비 상태로 변환하여 Equipment Topic 발행 |
+| `factory.manufacturing.analysis` | Manufacturing Consumer, AI Consumer | `alert-analysis-consumer-group` | 위험 조건 판정 후 Alert Topic 발행 |
+| `factory.manufacturing.equipment` | Equipment Consumer | `dashboard-consumer-group` | 대시보드용 설비 상태 이벤트 소비 |
+| `factory.manufacturing.alert` | Alert Analysis Consumer | `alert-notification-consumer-group` | 실시간 알림 대상 이벤트 소비 |
+
+Producer 메서드와 발행 대상은 다음과 같습니다.
+
+| Producer 메서드 | 발행 Topic | Message Key |
+| --- | --- | --- |
+| `ManufacturingKafkaProducer.sendRaw()` | `factory.manufacturing.raw` | `equipmentCode` |
+| `ManufacturingKafkaProducer.sendAnalysis()` | `factory.manufacturing.analysis` | 기본 `equipmentCode`, 불량 전이는 `carId` |
+| `ManufacturingKafkaProducer.sendEquipment()` | `factory.manufacturing.equipment` | `equipmentCode` |
+| `ManufacturingKafkaProducer.sendAlert()` | `factory.manufacturing.alert` | `equipmentCode` |
+
+### Consumer Group 구성 원칙
+
+Kafka에서는 같은 Topic을 구독하더라도 Consumer Group이 다르면 각 Group이 동일한 메시지를 독립적으로 한 번씩 받습니다.
+
+예를 들어 Raw 이벤트 1건은 다음 두 Group에 각각 전달됩니다.
+
+```text
+factory.manufacturing.raw의 이벤트 1건
+        ├─ manufacturing-consumer-group에서 1회 처리
+        └─ ai-consumer-group에서 1회 처리
+```
+
+반대로 같은 Consumer Group 안에 Consumer가 여러 개 있으면 하나의 메시지는 Group 내부 Consumer 중 하나만 처리합니다. 현재 모든 Topic은 Partition 2개이고 각 Listener의 `concurrency`도 2이므로 Group마다 최대 2개의 Consumer가 Partition을 나누어 병렬 처리합니다.
+
+```text
+factory.manufacturing.raw (Partition 0, Partition 1)
+        │
+        └─ manufacturing-consumer-group
+             ├─ Consumer 1 → Partition 0
+             └─ Consumer 2 → Partition 1
+```
+
+Partition 할당은 Consumer 재시작, 증감 또는 재조정 시 달라질 수 있습니다. 중요한 기준은 같은 Group 안에서 하나의 Partition을 동시에 여러 Consumer가 처리하지 않는다는 점입니다.
+
+각 Consumer Group은 Offset도 독립적으로 관리합니다. 한 Group의 처리가 늦거나 중지되어도 다른 Group의 Offset과 처리에는 영향을 주지 않습니다.
+
+| Consumer Group | 구독 Topic | Concurrency | 생성하는 결과 |
+| --- | --- | ---: | --- |
+| `manufacturing-consumer-group` | Raw | 2 | Analysis 1건 |
+| `ai-consumer-group` | Raw | 2 | Analysis 2건 |
+| `equipment-consumer-group` | Analysis | 2 | Analysis 1건당 Equipment 1건 |
+| `alert-analysis-consumer-group` | Analysis | 2 | 조건 충족 시 Alert 1건 |
+| `dashboard-consumer-group` | Equipment | 2 | 현재는 로그와 추적 이력 기록 |
+| `alert-notification-consumer-group` | Alert | 2 | 현재는 로그와 추적 이력 기록 |
+
+Raw 이벤트 1건의 일반적인 메시지 생성 수는 다음과 같습니다.
+
+```text
+Raw 1건
+  → Analysis 3건
+      → Equipment 3건
+      → Alert 0~3건
+```
+
+Alert 건수는 각 Analysis 결과의 위험 조건 충족 여부에 따라 달라집니다.
+
+### Consumer 처리 코드
+
+`ManufacturingKafkaConsumer`의 Listener 구성은 다음과 같습니다.
+
+| Listener 메서드 | Group ID | 입력 | 후속 처리 |
+| --- | --- | --- | --- |
+| `consumeRaw()` | `manufacturing-consumer-group` | Raw | 공정 Router 실행 후 Analysis 발행 |
+| `consumeRawForAi()` | `ai-consumer-group` | Raw | 병목 및 불량 전이 Analysis 2건 발행 |
+| `consumeAnalysisForEquipment()` | `equipment-consumer-group` | Analysis | Equipment 발행 |
+| `consumeAnalysisForAlert()` | `alert-analysis-consumer-group` | Analysis | 조건부 Alert 발행 |
+| `consumeEquipment()` | `dashboard-consumer-group` | Equipment | 대시보드 소비 이력 기록 |
+| `consumeAlert()` | `alert-notification-consumer-group` | Alert | 알림 소비 이력 기록 |
+
+Consumer는 메시지 처리를 완료한 후 Record 단위로 Offset을 Commit하도록 설정되어 있습니다. 후속 Topic 발행은 `.join()`으로 broker 결과를 확인하므로 발행 실패가 발생하면 현재 Record 처리를 성공으로 완료하지 않습니다.
+
+### 분석 및 알림 기준
+
+`ManufacturingEventAnalyzer`는 PRD에서 정의한 다음 입력값을 사용해 규칙 기반 위험도를 계산합니다.
+
+- 병목 위험도: `cycleTimeSec`, `waitingTimeSec`, `stationDelaySec`, `queueLength`, `wipCount`, `equipmentIdleTimeSec`
+- 설비 위험도: 전류 RMS, 일반 진동, 로봇 암 진동, 설비 상태
+- 불량 전이 위험도: 전류, 진동, 로봇 암 진동, 열화상 온도
+- PRESS: 생산 카운트 증가 여부, 기준/실제 사이클타임, 전류 RMS
+- BODY: 로봇 암 진동 점수와 주파수
+- PAINT: 비전 불량 점수, 온도 편차, 표면 품질 점수
+- ASSEMBLY: 작업 순서 오류, 누락 부품, 체결 오류
+
+위험 등급은 다음 기준을 사용합니다.
+
+| 점수 | 위험 등급 |
+| ---: | --- |
+| 0 이상 60 미만 | `LOW` |
+| 60 이상 80 미만 | `WARNING` |
+| 80 이상 | `CRITICAL` |
+
+다음 중 하나라도 충족하면 `factory.manufacturing.alert`로 알림을 발행합니다.
+
+- 위험 등급이 `WARNING` 또는 `CRITICAL`
+- 종합 위험도가 80점 이상
+- 설비 고장, 품질 불량, 병목, 조립 순서 오류가 감지됨
+
+### Kafka Message Key
+
+Raw, Equipment, Alert 이벤트는 `equipmentCode`를 Message Key로 사용합니다. 동일 설비 이벤트가 같은 Partition으로 전달되므로 설비별 순서를 유지할 수 있습니다.
+
+Analysis 이벤트는 기본적으로 `equipmentCode`를 사용하고, `DEFECT_TRANSFER_PREDICTION`은 차량 단위 추적을 위해 `carId`를 사용합니다.
+
+### SampleDB 이벤트 재생 Scheduler
+
+`ManufacturingEventReplayScheduler`는 `manufacturing_event_json`에서 다음 조건으로 이벤트를 조회합니다.
+
+```sql
+WHERE COALESCE(is_sent, 0) = 0
+ORDER BY event_time ASC, id ASC
+LIMIT :batchSize
+```
+
+처리 순서는 다음과 같습니다.
+
+1. 미전송 이벤트를 설정된 건수만큼 조회합니다.
+2. `factory.manufacturing.raw`로 발행합니다.
+3. Kafka broker가 저장 성공을 응답한 이벤트만 `is_sent=1`로 변경합니다.
+4. 성공 시 `sent_at`을 현재 시각으로 저장합니다.
+5. 이전 Scheduler 작업이 진행 중이면 다음 실행을 건너뛰어 중복 조회를 방지합니다.
+
+Scheduler는 기본적으로 비활성화되어 있습니다. 자동 재생이 필요한 환경에서만 활성화합니다.
+
+```properties
+KAFKA_REPLAY_SCHEDULER_ENABLED=true
+KAFKA_REPLAY_FIXED_DELAY_MS=5000
+KAFKA_REPLAY_BATCH_SIZE=10
+```
+
+| 환경변수 | 기본값 | 설명 |
+| --- | ---: | --- |
+| `KAFKA_REPLAY_SCHEDULER_ENABLED` | `false` | 자동 재생 활성화 여부 |
+| `KAFKA_REPLAY_FIXED_DELAY_MS` | `5000` | 이전 작업 완료 후 다음 실행까지 대기 시간(ms) |
+| `KAFKA_REPLAY_BATCH_SIZE` | `10` | 실행당 발행 건수, 코드에서 1~1000건으로 제한 |
+| `KAFKA_LISTENERS_ENABLED` | `true` | 전체 Kafka Consumer Listener 활성화 여부 |
+
+### Kafka 테스트 및 진단 API
+
+기본 경로는 `/api/kafka/manufacturing`입니다.
+
+| Method | 경로 | 설명 |
+| --- | --- | --- |
+| `GET` | `/sample` | 다음 미전송 SampleDB 이벤트 조회 |
+| `POST` | `/send/{id}` | 지정한 SampleDB PK의 이벤트를 Raw Topic으로 발행 |
+| `POST` | `/send-sample` | 다음 미전송 이벤트 1건 발행 |
+| `GET` | `/events?limit=20` | SampleDB 이벤트와 전송 상태 조회 |
+| `GET` | `/broker` | 실제 Kafka/MSK 연결 및 Topic Partition 조회 |
+| `GET` | `/messages` | 현재 애플리케이션 인스턴스의 최근 송수신 이력 조회 |
+| `GET` | `/messages?eventId={eventId}` | 특정 이벤트의 Topic 처리 흐름 조회 |
+
+예시:
+
+```bash
+curl -X POST http://localhost:8082/api/kafka/manufacturing/send/1
+curl "http://localhost:8082/api/kafka/manufacturing/messages?eventId=EVT-20260601-000001"
+curl http://localhost:8082/api/kafka/manufacturing/broker
+```
+
+`/messages`는 현재 애플리케이션 인스턴스 메모리에 최대 200건만 보관하는 개발·진단용 기능입니다. 애플리케이션 재시작 시 초기화되며 Kafka 영구 메시지 조회 API가 아닙니다.
+
+### 주요 Kafka 코드
+
+| 클래스 | 역할 |
+| --- | --- |
+| `KafkaConfig` | Kafka Admin, Producer, Consumer, 수동 Offset Commit, Topic Bean 구성 |
+| `KafkaCustomProperties` | broker, 보안, Listener, Scheduler, Topic 설정 바인딩 |
+| `ManufacturingEventJsonRepository` | SampleDB 이벤트 조회와 전송 완료 상태 갱신 |
+| `ManufacturingRawEventService` | 단건·배치 Raw 발행 및 Kafka 성공 후 DB 상태 변경 |
+| `ManufacturingEventReplayScheduler` | 미전송 이벤트 주기적 배치 재생 |
+| `ManufacturingKafkaProducer` | Topic별 Message Key 선택, JSON 직렬화, broker 메타데이터 반환 |
+| `ManufacturingKafkaConsumer` | Consumer Group별 소비와 다음 Topic 연쇄 발행 |
+| `ManufacturingProcessRouter` | `processCode` 기준 공정 전용 Handler 선택 |
+| `ManufacturingEventAnalyzer` | 공정, 병목, 불량 전이 위험도 계산과 Equipment/Alert 변환 |
+| `KafkaMessageTraceStore` | 현재 인스턴스의 최근 Kafka 송수신 이력 최대 200건 보관 |
+| `KafkaDiagnosticsService` | 실제 cluster, broker, Topic Partition 상태 조회 |
+
+현재 `dashboard-consumer-group`과 `alert-notification-consumer-group`은 메시지 소비, 로그, 추적 이력 기록까지 구현되어 있습니다. Redis 저장, Main DB 영속화, WebSocket Push, OpenSearch 적재는 별도 연동 구현이 필요합니다.
 
 ## 패키지 구조
 
@@ -250,7 +478,7 @@ Windows:
 Swagger UI:
 
 ```text
-http://localhost:8080/swagger-ui/index.html
+http://localhost:8082/swagger-ui/index.html
 ```
 
 ## 테스트
