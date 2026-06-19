@@ -139,7 +139,7 @@ SampleDB의 제조 이벤트를 재생하고 공정 분석, AI 분석, 설비 �
 | Topic | 역할 | Message Key | Partition |
 | --- | --- | --- | ---: |
 | `factory.manufacturing.raw` | SampleDB 원천 제조 이벤트 | `equipmentCode` | 2 |
-| `factory.manufacturing.analysis` | 공정 위험, 병목, 불량 전이 분석 결과 | 기본 `equipmentCode`, 불량 전이는 `carId` | 2 |
+| `factory.manufacturing.analysis` | 공정 위험, 병목, 불량 전이 분석 결과 | 기본 `equipmentCode`, 불량 전이는 `carId → carMasterId → equipmentCode` | 2 |
 | `factory.manufacturing.equipment` | 설비 상태와 가동률 이벤트 | `equipmentCode` | 2 |
 | `factory.manufacturing.alert` | 위험 조건을 만족한 알림 이벤트 | `equipmentCode` | 2 |
 
@@ -267,7 +267,7 @@ Producer 메서드와 발행 대상은 다음과 같습니다.
 | Producer 메서드 | 발행 Topic | Message Key |
 | --- | --- | --- |
 | `ManufacturingKafkaProducer.sendRaw()` | `factory.manufacturing.raw` | `equipmentCode` |
-| `ManufacturingKafkaProducer.sendAnalysis()` | `factory.manufacturing.analysis` | 기본 `equipmentCode`, 불량 전이는 `carId` |
+| `ManufacturingKafkaProducer.sendAnalysis()` | `factory.manufacturing.analysis` | 기본 `equipmentCode`, 불량 전이는 `carId → carMasterId → equipmentCode` |
 | `ManufacturingKafkaProducer.sendEquipment()` | `factory.manufacturing.equipment` | `equipmentCode` |
 | `ManufacturingKafkaProducer.sendAlert()` | `factory.manufacturing.alert` | `equipmentCode` |
 
@@ -362,7 +362,7 @@ Consumer는 메시지 처리를 완료한 후 Record 단위로 Offset을 Commit�
 
 Raw, Equipment, Alert 이벤트는 `equipmentCode`를 Message Key로 사용합니다. 동일 설비 이벤트가 같은 Partition으로 전달되므로 설비별 순서를 유지할 수 있습니다.
 
-Analysis 이벤트는 기본적으로 `equipmentCode`를 사용하고, `DEFECT_TRANSFER_PREDICTION`은 차량 단위 추적을 위해 `carId`를 사용합니다.
+Analysis 이벤트는 기본적으로 `equipmentCode`를 사용합니다. `DEFECT_TRANSFER_PREDICTION`은 차량 단위 추적을 위해 `carId`를 우선 사용하고, 누락 시 `CAR_MASTER-{carMasterId}`, 마지막으로 `equipmentCode`를 사용합니다. 대체 Key를 사용하면 경고 로그를 기록합니다.
 
 ### SampleDB 이벤트 재생 Scheduler
 

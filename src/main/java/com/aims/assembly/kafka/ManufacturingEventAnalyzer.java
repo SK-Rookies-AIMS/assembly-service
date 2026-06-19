@@ -126,6 +126,7 @@ public class ManufacturingEventAnalyzer {
                 event.equipmentType(),
                 text(event.eventJson(), "product", "productId"),
                 text(event.eventJson(), "product", "carId"),
+                event.carMasterId(),
                 analysisType,
                 new ManufacturingAnalysisEvent.RiskScores(
                         overallRisk,

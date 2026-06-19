@@ -16,8 +16,6 @@ public class KafkaCustomProperties {
 
     // Kafka/MSK bootstrap broker 목록
     private List<String> bootstrapServers = List.of("localhost:9092");
-    // @KafkaListener에 별도 groupId가 없는 경우 사용할 기본 Consumer Group
-    private String groupId = "assembly-local";
     // Consumer Group의 저장 offset이 없는 경우 시작 위치
     private String autoOffsetReset = "earliest";
     // 전체 Kafka Listener 시작 여부

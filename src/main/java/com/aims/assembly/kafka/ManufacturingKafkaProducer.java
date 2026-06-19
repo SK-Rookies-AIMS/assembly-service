@@ -9,6 +9,7 @@ import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.properties.KafkaCustomProperties;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository.StoredManufacturingEvent;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
@@ -17,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 /**
  * 제조 파이프라인 토픽별 메시지 발행.
  * 메시지 직렬화, key 선택, broker 저장 메타데이터 반환 담당.
@@ -43,11 +45,8 @@ public class ManufacturingKafkaProducer {
     }
 
     public CompletableFuture<KafkaPublishResult> sendAnalysis(ManufacturingAnalysisEvent event) {
-        // 불량 전이 분석의 차량 단위 순서 보장을 위한 carId key 선택
-        // 일반 공정 분석의 설비 단위 순서 보장을 위한 equipmentCode key 선택
-        String key = "DEFECT_TRANSFER_PREDICTION".equals(event.analysisType())
-                ? event.carId()
-                : event.equipmentCode();
+        // 불량 전이 분석은 차량 식별자를 우선 사용하고 누락 시 안전한 대체 key를 선택
+        String key = analysisMessageKey(event);
 
         // 분석 결과 토픽 발행
         return send(
@@ -56,6 +55,39 @@ public class ManufacturingKafkaProducer {
                 event.eventId(),
                 event
         );
+    }
+
+    String analysisMessageKey(ManufacturingAnalysisEvent event) {
+        // 일반 공정 및 병목 분석은 설비 단위 순서 보장을 위해 equipmentCode 사용
+        if (!"DEFECT_TRANSFER_PREDICTION".equals(event.analysisType())) {
+            return event.equipmentCode();
+        }
+
+        // 불량 전이 분석은 차량 단위 순서 보장을 위해 carId를 최우선으로 사용
+        if (hasText(event.carId())) {
+            return event.carId();
+        }
+
+        // carId가 없으면 SampleDB 차량 PK를 안정적인 대체 key로 사용
+        if (event.carMasterId() != null && event.carMasterId() > 0) {
+            String fallbackKey = "CAR_MASTER-" + event.carMasterId();
+            log.warn(
+                    "불량 전이 분석의 carId가 없어 carMasterId를 Kafka key로 사용합니다. "
+                            + "eventId={}, fallbackKey={}",
+                    event.eventId(),
+                    fallbackKey
+            );
+            return fallbackKey;
+        }
+
+        // 차량 식별자가 모두 없으면 key 없는 메시지가 되지 않도록 equipmentCode 사용
+        log.warn(
+                "불량 전이 분석의 차량 식별자가 없어 equipmentCode를 Kafka key로 사용합니다. "
+                        + "eventId={}, fallbackKey={}",
+                event.eventId(),
+                event.equipmentCode()
+        );
+        return event.equipmentCode();
     }
 
     public CompletableFuture<KafkaPublishResult> sendAlert(ManufacturingAlertEvent event) {
@@ -145,5 +177,9 @@ public class ManufacturingKafkaProducer {
     private Throwable unwrap(Throwable exception) {
         // CompletableFuture CompletionException 내부 원인 추출
         return exception.getCause() == null ? exception : exception.getCause();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }

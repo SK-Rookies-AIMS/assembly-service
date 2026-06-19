@@ -22,6 +22,7 @@ public record ManufacturingAnalysisEvent(
         String equipmentType,
         String productId,
         String carId,
+        Long carMasterId,
         String analysisType,
         RiskScores riskScores,
         double operationRate,
