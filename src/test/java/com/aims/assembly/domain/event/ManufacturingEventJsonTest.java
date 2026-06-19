@@ -58,8 +58,8 @@ class ManufacturingEventJsonTest {
     }
 
     @Test
-    @DisplayName("기본 생성자와 setter로 제조 이벤트 JSON을 생성할 수 있다")
-    void createManufacturingEventJsonWithNoArgsConstructorAndSetters() {
+    @DisplayName("빌더로 전송 완료 상태의 제조 이벤트 JSON을 생성할 수 있다")
+    void createSentManufacturingEventJsonWithBuilder() {
         LocalDateTime eventTime = LocalDateTime.of(2026, 6, 17, 11, 0);
         LocalDateTime sentAt = LocalDateTime.of(2026, 6, 17, 11, 1);
         CarMaster carMaster = createCarMaster();
@@ -67,16 +67,17 @@ class ManufacturingEventJsonTest {
         JsonNode eventJson = JsonNodeFactory.instance.objectNode()
                 .put("robotCurrentRms", 12.3);
 
-        ManufacturingEventJson event = new ManufacturingEventJson();
-        event.setEventId("EVT-20260617-002");
-        event.setEventTime(eventTime);
-        event.setCarMaster(carMaster);
-        event.setEquipment(equipment);
-        event.setProcessCode(ProcessCode.BODY);
-        event.setEquipmentCode("ROBOT-001");
-        event.setEventJson(eventJson);
-        event.setIsSent(true);
-        event.setSentAt(sentAt);
+        ManufacturingEventJson event = ManufacturingEventJson.builder()
+                .eventId("EVT-20260617-002")
+                .eventTime(eventTime)
+                .carMaster(carMaster)
+                .equipment(equipment)
+                .processCode(ProcessCode.BODY)
+                .equipmentCode("ROBOT-001")
+                .eventJson(eventJson)
+                .isSent(true)
+                .sentAt(sentAt)
+                .build();
 
         assertAll(
                 () -> assertEquals("EVT-20260617-002", event.getEventId()),

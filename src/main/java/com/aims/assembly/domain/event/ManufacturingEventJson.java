@@ -85,4 +85,9 @@ public class ManufacturingEventJson extends BaseEntity {
 
     @Column(name = "sent_at")
     private LocalDateTime sentAt;
+
+    public void markSent(LocalDateTime sentAt) {
+        this.isSent = true;
+        this.sentAt = sentAt;
+    }
 }
