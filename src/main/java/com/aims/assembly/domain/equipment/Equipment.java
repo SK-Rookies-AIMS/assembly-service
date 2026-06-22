@@ -68,4 +68,22 @@ public class Equipment {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    public void markFault(LocalDateTime faultTime, String reason, boolean stopRequired) {
+        this.healthStatus = EquipmentHealthStatus.ABNORMAL;
+        if (stopRequired) {
+            this.currentStatus = EquipmentOperationStatus.FAULT;
+        } else if (this.currentStatus == EquipmentOperationStatus.RUNNING) {
+            this.currentStatus = EquipmentOperationStatus.WARNING;
+        }
+        this.lastFaultTime = faultTime;
+        this.reason = reason;
+    }
+
+    public void recover(LocalDateTime recoveredTime, String reason) {
+        this.healthStatus = EquipmentHealthStatus.NORMAL;
+        this.currentStatus = EquipmentOperationStatus.RUNNING;
+        this.lastRecoveredTime = recoveredTime;
+        this.reason = reason;
+    }
 }

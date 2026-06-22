@@ -16,7 +16,6 @@ public record ManufacturingAlertEvent(
         String factoryCode,
         String lineCode,
         ProcessCode processCode,
-        String stationCode,
         String equipmentCode,
         String equipmentName,
         String alertType,

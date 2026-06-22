@@ -1,7 +1,9 @@
 package com.aims.assembly.repository.event;
 
-import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.common.status.KafkaErrorStatus;
+import com.aims.assembly.domain.enums.AnalysisStatus;
+import com.aims.assembly.domain.enums.DispatchStatus;
+import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -18,160 +20,288 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * SampleDB manufacturing_event_json 원천 이벤트 조회 및 전송 상태 갱신.
- */
 @Repository
 public class ManufacturingEventJsonRepository {
 
-    // raw Kafka 메시지 구성과 전송 상태 확인에 필요한 엔티티 컬럼
     private static final String SELECT_COLUMNS = """
             id, event_id, event_time, car_master_id, equipment_id, process_code,
-            station_code, equipment_code, equipment_type, equipment_status,
-            event_type, event_json, is_sent, sent_at
+            (SELECT equipment.equipment_code FROM equipment
+             WHERE equipment.id = manufacturing_event_json.equipment_id) AS equipment_code,
+            (SELECT equipment.equipment_type FROM equipment
+             WHERE equipment.id = manufacturing_event_json.equipment_id) AS equipment_type,
+            event_json,
+            dispatch_status, analysis_status, is_sent, retry_count, error_message
             """;
 
-    private final JdbcTemplate sampleJdbcTemplate;
+    private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ManufacturingEventJsonRepository(
-            @Qualifier("sampleJdbcTemplate") JdbcTemplate sampleJdbcTemplate
+            @Qualifier("sampleJdbcTemplate") JdbcTemplate jdbcTemplate
     ) {
-        this.sampleJdbcTemplate = sampleJdbcTemplate;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public Optional<StoredManufacturingEvent> findById(long id) {
-        // PK 기준 단일 SampleDB 제조 이벤트 조회
-        return sampleJdbcTemplate.query(
+        return jdbcTemplate.query(
                 "SELECT " + SELECT_COLUMNS + " FROM manufacturing_event_json WHERE id = ?",
-                rowMapper(),
-                id
+                rowMapper(), id
         ).stream().findFirst();
     }
 
-    public Optional<StoredManufacturingEvent> findFirstUnsent() {
-        // 미전송 이벤트 중 event_time과 id 기준 가장 오래된 1건 조회
-        return findUnsent(1).stream().findFirst();
+    public Optional<StoredManufacturingEvent> findByEventId(String eventId) {
+        return jdbcTemplate.query(
+                "SELECT " + SELECT_COLUMNS + " FROM manufacturing_event_json WHERE event_id = ?",
+                rowMapper(), eventId
+        ).stream().findFirst();
     }
 
-    public List<StoredManufacturingEvent> findUnsent(int limit) {
-        // Scheduler가 순서대로 재생할 미전송 이벤트 묶음 조회
-        return sampleJdbcTemplate.query(
+    public Optional<StoredManufacturingEvent> findReadyByIdForUpdate(long id) {
+        return jdbcTemplate.query(
+                "SELECT " + SELECT_COLUMNS + " FROM manufacturing_event_json "
+                        + "WHERE id = ? AND dispatch_status = 'READY' "
+                        + "AND COALESCE(is_sent, 0) = 0 FOR UPDATE",
+                rowMapper(), id
+        ).stream().findFirst();
+    }
+
+    public Optional<StoredManufacturingEvent> findFirstReady(
+            LocalDateTime virtualNow,
+            int maxRetries
+    ) {
+        return jdbcTemplate.query(
+                """
+                        SELECT %s FROM manufacturing_event_json
+                        WHERE dispatch_status = 'READY' AND COALESCE(is_sent, 0) = 0
+                          AND event_time <= ? AND COALESCE(retry_count, 0) < ?
+                        ORDER BY event_time ASC, id ASC LIMIT 1
+                        """.formatted(SELECT_COLUMNS),
+                rowMapper(), virtualNow, maxRetries
+        ).stream().findFirst();
+    }
+
+    /** Must be invoked inside the sample DB transaction and held until publish result is known. */
+    public List<StoredManufacturingEvent> findReadyForUpdate(
+            LocalDateTime virtualNow,
+            int limit,
+            int maxRetries
+    ) {
+        return jdbcTemplate.query(
                 """
                         SELECT %s
                         FROM manufacturing_event_json
-                        WHERE COALESCE(is_sent, 0) = 0
+                        WHERE dispatch_status = 'READY'
+                          AND COALESCE(is_sent, 0) = 0
+                          AND event_time <= ?
+                          AND COALESCE(retry_count, 0) < ?
                         ORDER BY event_time ASC, id ASC
                         LIMIT ?
+                        FOR UPDATE SKIP LOCKED
                         """.formatted(SELECT_COLUMNS),
-                rowMapper(),
-                limit
+                rowMapper(), virtualNow, maxRetries, Math.min(Math.max(limit, 1), 1_000)
         );
     }
 
     public List<StoredManufacturingEvent> findRecent(int limit) {
-        // 테스트 화면 확인용 제조 이벤트 목록 조회
-        return sampleJdbcTemplate.query(
-                """
-                        SELECT %s
-                        FROM manufacturing_event_json
-                        ORDER BY event_time ASC, id ASC
-                        LIMIT ?
-                        """.formatted(SELECT_COLUMNS),
-                rowMapper(),
-                limit
+        return jdbcTemplate.query(
+                "SELECT " + SELECT_COLUMNS
+                        + " FROM manufacturing_event_json ORDER BY event_time ASC, id ASC LIMIT ?",
+                rowMapper(), limit
         );
     }
 
-    public int markSent(long id, LocalDateTime sentAt) {
-        // Kafka broker 저장 성공 이후 전송 완료 상태와 시각 갱신
-        return sampleJdbcTemplate.update(
+    /**
+     * Activates only the earliest pending event per vehicle. A preceding event with
+     * NOT_ANALYZED blocks progression; completed NORMAL/ABNORMAL events do not.
+     */
+    public int prepareDispatchablePendingEvents(LocalDateTime virtualNow, int limit) {
+        List<PendingActivation> candidates = jdbcTemplate.query(
+                """
+                        SELECT e.id, q.health_status, q.current_status
+                        FROM manufacturing_event_json e
+                        LEFT JOIN equipment q ON q.id = e.equipment_id
+                        WHERE e.dispatch_status = 'PENDING'
+                          AND COALESCE(e.is_sent, 0) = 0
+                          AND e.event_time <= ?
+                          AND NOT EXISTS (
+                              SELECT 1 FROM manufacturing_event_json previous
+                              WHERE previous.car_master_id = e.car_master_id
+                                AND (previous.event_time < e.event_time
+                                  OR (previous.event_time = e.event_time AND previous.id < e.id))
+                                AND previous.analysis_status = 'NOT_ANALYZED'
+                          )
+                        ORDER BY e.event_time ASC, e.id ASC
+                        LIMIT ?
+                        FOR UPDATE SKIP LOCKED
+                        """,
+                (rs, rowNum) -> new PendingActivation(
+                        rs.getLong("id"), rs.getString("health_status"),
+                        rs.getString("current_status")),
+                virtualNow, Math.min(Math.max(limit, 1), 1_000)
+        );
+        int updated = 0;
+        for (PendingActivation candidate : candidates) {
+            boolean faulted = "ABNORMAL".equals(candidate.healthStatus())
+                    || "FAULT".equals(candidate.operationStatus())
+                    || "STOPPED".equals(candidate.operationStatus());
+            updated += jdbcTemplate.update(
+                    """
+                            UPDATE manufacturing_event_json
+                            SET dispatch_status = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ? AND dispatch_status = 'PENDING'
+                              AND COALESCE(is_sent, 0) = 0
+                            """,
+                    faulted ? DispatchStatus.BLOCKED.name() : DispatchStatus.READY.name(),
+                    candidate.id()
+            );
+        }
+        return updated;
+    }
+
+    public int markSent(long id) {
+        return jdbcTemplate.update(
                 """
                         UPDATE manufacturing_event_json
-                        SET is_sent = 1,
-                            sent_at = ?,
+                        SET dispatch_status = 'SENT', is_sent = 1, error_message = NULL,
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                sentAt,
-                id
+                        WHERE id = ? AND dispatch_status = 'READY' AND COALESCE(is_sent, 0) = 0
+                        """, id
+        );
+    }
+
+    public int markPublishFailed(long id, String errorMessage) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json
+                        SET is_sent = 0, retry_count = COALESCE(retry_count, 0) + 1,
+                            error_message = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND dispatch_status = 'READY' AND COALESCE(is_sent, 0) = 0
+                        """, abbreviate(errorMessage), id
+        );
+    }
+
+    public int markAnalysisCompleted(String eventId, boolean abnormal) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json
+                        SET analysis_status = ?, error_message = NULL, updated_at = CURRENT_TIMESTAMP
+                        WHERE event_id = ?
+                        """, abnormal ? AnalysisStatus.ABNORMAL.name() : AnalysisStatus.NORMAL.name(), eventId
+        );
+    }
+
+    public int markAnalysisFailed(String eventId, String errorMessage) {
+        // AnalysisStatus has no failure value. Preserve NOT_ANALYZED and retain the technical error.
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json
+                        SET analysis_status = 'NOT_ANALYZED', error_message = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE event_id = ?
+                        """, abbreviate(errorMessage), eventId
+        );
+    }
+
+    public int blockReadyEvents(long equipmentId, String equipmentCode) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json
+                        SET dispatch_status = 'BLOCKED', updated_at = CURRENT_TIMESTAMP
+                        WHERE (equipment_id = ? OR equipment_id IN (
+                              SELECT id FROM equipment WHERE equipment_code = ?))
+                          AND dispatch_status = 'READY' AND COALESCE(is_sent, 0) = 0
+                        """, equipmentId, equipmentCode
+        );
+    }
+
+    public int restoreBlockedEvents(long equipmentId, String equipmentCode) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json
+                        SET dispatch_status = 'READY', updated_at = CURRENT_TIMESTAMP
+                        WHERE (equipment_id = ? OR equipment_id IN (
+                              SELECT id FROM equipment WHERE equipment_code = ?))
+                          AND dispatch_status = 'BLOCKED' AND COALESCE(is_sent, 0) = 0
+                        """, equipmentId, equipmentCode
         );
     }
 
     private RowMapper<StoredManufacturingEvent> rowMapper() {
         return (rs, rowNum) -> {
-            // JSON 파싱 오류 메시지에 사용할 SampleDB PK 추출
             long id = rs.getLong("id");
-
-            // 엔티티 식별·라우팅 컬럼과 event_json 상세 데이터 결합
+            String rawJson = rs.getString("event_json");
+            Map<String, Object> eventJson = parseEventJson(id, rawJson);
             ManufacturingRawEvent payload = new ManufacturingRawEvent(
-                    id,
-                    rs.getString("event_id"),
-                    rs.getTimestamp("event_time").toLocalDateTime(),
-                    nullableLong(rs, "car_master_id"),
-                    nullableLong(rs, "equipment_id"),
+                    id, rs.getString("event_id"), nullableDateTime(rs, "event_time"),
+                    nullableLong(rs, "car_master_id"), nullableLong(rs, "equipment_id"),
                     ProcessCode.valueOf(rs.getString("process_code")),
-                    rs.getString("station_code"),
-                    rs.getString("equipment_code"),
-                    rs.getString("equipment_type"),
-                    rs.getString("equipment_status"),
-                    rs.getString("event_type"),
-                    parseEventJson(id, rs.getString("event_json"))
+                    rs.getString("equipment_code"), rs.getString("equipment_type"), null, null, eventJson
             );
-
-            // Kafka payload와 SampleDB 전송 상태를 함께 반환
             return new StoredManufacturingEvent(
-                    payload,
-                    rs.getBoolean("is_sent"),
-                    rs.getTimestamp("sent_at") == null
-                            ? null
-                            : rs.getTimestamp("sent_at").toLocalDateTime()
+                    payload, rawJson, findText(eventJson, "carId"),
+                    DispatchStatus.valueOf(rs.getString("dispatch_status")),
+                    AnalysisStatus.valueOf(rs.getString("analysis_status")),
+                    rs.getBoolean("is_sent"), rs.getLong("retry_count"),
+                    rs.getString("error_message")
             );
         };
     }
 
-    private Map<String, Object> parseEventJson(long id, String eventJson) {
+    private Map<String, Object> parseEventJson(long id, String json) {
         try {
-            // MySQL JSON 문자열을 Kafka 모델의 eventJson Map으로 변환
-            return objectMapper.readValue(
-                    eventJson,
-                    new TypeReference<Map<String, Object>>() {
-                    }
-            );
+            return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception exception) {
-            // 손상된 JSON 데이터의 SampleDB 행 식별 정보 포함
-            throw new KafkaException(
-                    KafkaErrorStatus.INVALID_EVENT_JSON,
-                    "제조 이벤트 JSON 데이터가 올바르지 않습니다. id=" + id,
-                    exception
-            );
+            throw new KafkaException(KafkaErrorStatus.INVALID_EVENT_JSON,
+                    "Invalid manufacturing event JSON. id=" + id, exception);
         }
     }
 
-    private Long nullableLong(ResultSet resultSet, String column) throws SQLException {
-        // JDBC primitive long 조회 후 SQL NULL 복원
-        long value = resultSet.getLong(column);
-        return resultSet.wasNull() ? null : value;
+    private String findText(Object value, String field) {
+        if (value instanceof Map<?, ?> map) {
+            Object direct = map.get(field);
+            if (direct != null && !direct.toString().isBlank()) return direct.toString();
+            for (Object nested : map.values()) {
+                String found = findText(nested, field);
+                if (found != null) return found;
+            }
+        } else if (value instanceof Iterable<?> values) {
+            for (Object nested : values) {
+                String found = findText(nested, field);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
+
+    private Long nullableLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
+    }
+
+    private LocalDateTime nullableDateTime(ResultSet rs, String column) throws SQLException {
+        var timestamp = rs.getTimestamp(column);
+        return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+
+    private String abbreviate(String message) {
+        if (message == null) return "Unknown technical failure";
+        return message.length() <= 2_000 ? message : message.substring(0, 2_000);
+    }
+
+    private record PendingActivation(long id, String healthStatus, String operationStatus) {}
 
     public record StoredManufacturingEvent(
             ManufacturingRawEvent payload,
+            String rawJson,
+            String carId,
+            DispatchStatus dispatchStatus,
+            AnalysisStatus analysisStatus,
             boolean sent,
-            LocalDateTime sentAt
+            long retryCount,
+            String errorMessage
     ) {
-        public long id() {
-            // SampleDB 상태 갱신용 PK 노출
-            return payload.id();
-        }
-
-        public String eventId() {
-            // Kafka 전체 파이프라인 추적 ID 노출
-            return payload.eventId();
-        }
-
-        public String equipmentCode() {
-            // Kafka partition 결정용 message key 노출
-            return payload.equipmentCode();
-        }
+        public long id() { return payload.id(); }
+        public String eventId() { return payload.eventId(); }
+        public String equipmentCode() { return payload.equipmentCode(); }
     }
 }

@@ -31,16 +31,14 @@ public class ManufacturingKafkaProducer {
     private final KafkaMessageTraceStore traceStore;
 
     public CompletableFuture<KafkaPublishResult> sendRaw(StoredManufacturingEvent event) {
-        // SampleDB 엔티티 컬럼과 event_json 결합 payload 선택
-        // equipmentCode key 사용을 통한 동일 설비 이벤트의 동일 partition 배치
+        // Persisted event_json is the complete immutable raw payload.
         return send(
                 // 원천 제조 이벤트 토픽 선택
                 kafkaProperties.getTopics().getRaw().getName(),
-                // 설비별 순서 보장용 message key
-                event.equipmentCode(),
+                event.carId(),
                 // 전체 파이프라인 추적용 eventId
                 event.eventId(),
-                event.payload()
+                event.rawJson()
         );
     }
 
@@ -58,12 +56,7 @@ public class ManufacturingKafkaProducer {
     }
 
     String analysisMessageKey(ManufacturingAnalysisEvent event) {
-        // 일반 공정 및 병목 분석은 설비 단위 순서 보장을 위해 equipmentCode 사용
-        if (!"DEFECT_TRANSFER_PREDICTION".equals(event.analysisType())) {
-            return event.equipmentCode();
-        }
-
-        // 불량 전이 분석은 차량 단위 순서 보장을 위해 carId를 최우선으로 사용
+        // All manufacturing analysis results use the vehicle key.
         if (hasText(event.carId())) {
             return event.carId();
         }

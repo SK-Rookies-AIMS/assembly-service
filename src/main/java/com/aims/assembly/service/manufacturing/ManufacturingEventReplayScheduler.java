@@ -35,7 +35,7 @@ public class ManufacturingEventReplayScheduler {
         }
 
         int batchSize = kafkaProperties.getScheduler().getBatchSize();
-        rawEventService.sendNextUnsentBatch(batchSize)
+        rawEventService.sendNextReadyBatch(batchSize)
                 .whenComplete((results, exception) -> {
                     try {
                         if (exception != null) {

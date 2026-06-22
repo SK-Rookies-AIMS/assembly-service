@@ -16,12 +16,10 @@ import java.time.LocalDateTime;
 @Table(
         name = "manufacturing_event_json",
         indexes = {
-                @Index(name = "idx_event_time_sent",
-                        columnList = "event_time, is_sent"),
+                @Index(name = "idx_dispatch_event_time",
+                        columnList = "dispatch_status, event_time, is_sent"),
                 @Index(name = "idx_process_time",
                         columnList = "process_code, event_time"),
-                @Index(name = "idx_equipment_time",
-                        columnList = "equipment_code, event_time"),
                 @Index(name = "idx_car_time",
                         columnList = "car_master_id, event_time"),
                 @Index(name = "idx_event_id",
@@ -67,22 +65,12 @@ public class ManufacturingEventJson extends BaseEntity {
     @Column(name = "event_id", nullable = false, length = 100)
     private String eventId;
 
-    @Column(name = "event_time", nullable = false)
+    @Column(name = "event_time", nullable = true)
     private LocalDateTime eventTime;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "process_code", nullable = false)
     private ProcessCode processCode;
-
-    @Column(name = "station_code", length = 50)
-    private String stationCode;
-
-    @Column(name = "equipment_code", nullable = false, length = 50)
-    private String equipmentCode;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "equipment_type", length = 50)
-    private EquipmentType equipmentType;
 
     @Builder.Default
     @Enumerated(EnumType.STRING)

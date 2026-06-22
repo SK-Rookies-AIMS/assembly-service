@@ -101,7 +101,9 @@ public class ManufacturingEventAnalyzer {
         boolean bottleneck = bottleneckRisk >= 60;
         boolean qualityDefect = isQualityDefect(event, defectTransferRisk);
         boolean equipmentFault = equipmentRisk >= 60
-                || "FAULT".equalsIgnoreCase(event.equipmentStatus());
+                || "FAULT".equalsIgnoreCase(event.equipmentStatus())
+                || "ERROR".equalsIgnoreCase(
+                        text(event.eventJson(), "equipmentStatus", "operationStatus"));
         boolean sequenceError = event.processCode() == ProcessCode.ASSEMBLY
                 && number(event.eventJson(), "processData", "assembly", "sequenceErrorCount") > 0;
 
@@ -120,7 +122,6 @@ public class ManufacturingEventAnalyzer {
                 text(event.eventJson(), "location", "factoryCode"),
                 text(event.eventJson(), "location", "lineCode"),
                 event.processCode(),
-                event.stationCode(),
                 event.equipmentCode(),
                 text(event.eventJson(), "equipment", "equipmentName"),
                 event.equipmentType(),
@@ -164,7 +165,6 @@ public class ManufacturingEventAnalyzer {
                 analysis.factoryCode(),
                 analysis.lineCode(),
                 analysis.processCode(),
-                analysis.stationCode(),
                 analysis.equipmentCode(),
                 analysis.equipmentName(),
                 analysis.equipmentType(),
@@ -190,7 +190,6 @@ public class ManufacturingEventAnalyzer {
                 analysis.factoryCode(),
                 analysis.lineCode(),
                 analysis.processCode(),
-                analysis.stationCode(),
                 analysis.equipmentCode(),
                 analysis.equipmentName(),
                 alertType(analysis),
@@ -310,7 +309,9 @@ public class ManufacturingEventAnalyzer {
         return defectTransferRisk >= 60
                 || "DEFECT".equalsIgnoreCase(
                         text(event.eventJson(), "processData", "paint", "visionLabel")
-                );
+                )
+                || number(event.eventJson(), "processData", "assembly", "missingPartCount") > 0
+                || number(event.eventJson(), "processData", "assembly", "fasteningErrorCount") > 0;
     }
 
     private double targetCycleTime(ManufacturingRawEvent event) {

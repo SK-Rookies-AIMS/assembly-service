@@ -38,6 +38,33 @@ class ManufacturingEventAnalyzerTest {
         assertThat(alert.analysisId()).isEqualTo(analysis.analysisId());
     }
 
+    @Test
+    void classifiesMissingPartsAsQualityDefectWithoutEquipmentFault() {
+        ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
+                "processData", Map.of("assembly", Map.of(
+                        "missingPartCount", 1, "fasteningErrorCount", 0))));
+
+        ManufacturingAnalysisEvent result = analyzer.analyze(raw);
+
+        assertThat(result.analysisResult().isQualityDefect()).isTrue();
+        assertThat(result.analysisResult().isEquipmentFault()).isFalse();
+        assertThat(analyzer.requiresAlert(result)).isTrue();
+        assertThat(ManufacturingKafkaConsumer.isAbnormalAnalysis(result)).isTrue();
+    }
+
+    @Test
+    void classifiesErrorOperationStatusAsEquipmentFault() {
+        ManufacturingRawEvent raw = raw(ProcessCode.PRESS, Map.of(
+                "equipmentStatus", Map.of("operationStatus", "ERROR")));
+
+        assertThat(analyzer.analyze(raw).analysisResult().isEquipmentFault()).isTrue();
+    }
+
+    private ManufacturingRawEvent raw(ProcessCode processCode, Map<String, Object> json) {
+        return new ManufacturingRawEvent(1, "EVT-X", LocalDateTime.now(), 1L, 2L,
+                processCode, "EQ-1", "TYPE", "RUNNING", "EVENT", json);
+    }
+
     private ManufacturingRawEvent createRawEvent() {
         // PRD 구조의 processMetrics, sensor, product 상세 데이터 구성
         return new ManufacturingRawEvent(
@@ -47,7 +74,6 @@ class ManufacturingEventAnalyzerTest {
                 100L,
                 200L,
                 ProcessCode.PRESS,
-                "PRESS_STATION_01",
                 "EQ_PRESS_01",
                 "HYDRAULIC_PRESS",
                 "WARNING",

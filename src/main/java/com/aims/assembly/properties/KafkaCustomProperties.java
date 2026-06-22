@@ -42,6 +42,8 @@ public class KafkaCustomProperties {
         private long fixedDelayMs = 5_000;
         // 한 번에 조회하고 발행할 이벤트 수
         private int batchSize = 10;
+
+        private int maxRetries = 3;
     }
 
     @Getter
@@ -54,7 +56,7 @@ public class KafkaCustomProperties {
         // 위험 알림
         private Topic alert = new Topic("factory.manufacturing.alert", 2);
         // 설비 상태
-        private Topic equipment = new Topic("factory.manufacturing.equipment", 2);
+        private Topic equipment = new Topic("factory.equipment.status", 2);
     }
 
     @Getter

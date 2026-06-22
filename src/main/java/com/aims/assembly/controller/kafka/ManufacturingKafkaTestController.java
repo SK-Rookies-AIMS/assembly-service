@@ -5,8 +5,10 @@ import com.aims.assembly.kafka.KafkaDiagnosticsService;
 import com.aims.assembly.kafka.KafkaMessageTraceStore;
 import com.aims.assembly.kafka.model.KafkaPublishResult;
 import com.aims.assembly.properties.KafkaCustomProperties;
-import com.aims.assembly.repository.event.ManufacturingEventJsonRepository.StoredManufacturingEvent;
+import com.aims.assembly.dto.kafka.StoredManufacturingEventResponse;
 import com.aims.assembly.service.manufacturing.ManufacturingRawEventService;
+import com.aims.assembly.service.equipment.EquipmentStateService;
+import com.aims.assembly.kafka.model.EquipmentStatusEvent;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -37,7 +39,7 @@ import java.util.concurrent.CompletableFuture;
                 테스트 흐름:
                 factory.manufacturing.raw
                 → factory.manufacturing.analysis
-                → factory.manufacturing.equipment / factory.manufacturing.alert
+                → factory.equipment.status / factory.manufacturing.alert
                 """
 )
 public class ManufacturingKafkaTestController {
@@ -46,6 +48,7 @@ public class ManufacturingKafkaTestController {
     private final KafkaCustomProperties kafkaProperties;
     private final KafkaMessageTraceStore traceStore;
     private final KafkaDiagnosticsService diagnosticsService;
+    private final EquipmentStateService equipmentStateService;
 
     @Operation(
             summary = "SampleDB의 다음 미전송 raw 이벤트 조회",
@@ -62,10 +65,10 @@ public class ManufacturingKafkaTestController {
             )
     })
     @GetMapping("/sample")
-    public ApiResponse<StoredManufacturingEvent> sample() {
+    public ApiResponse<StoredManufacturingEventResponse> sample() {
         // SampleDB 기준 다음 미전송 제조 이벤트 조회
         return ApiResponse.success(
-                rawEventService.findFirstUnsent(),
+                rawEventService.findFirstReady(),
                 "Next unsent SampleDB manufacturing event"
         );
     }
@@ -76,10 +79,10 @@ public class ManufacturingKafkaTestController {
                     경로의 ID에 해당하는 SampleDB `manufacturing_event_json` 행을 조회하고,
                     엔티티 컬럼과 `event_json`을 결합한 메시지를 `factory.manufacturing.raw`로 전송합니다.
 
-                    테이블의 `equipment_code`를 Kafka message key로 사용하므로 같은 설비의 이벤트는
+                    연결된 Equipment의 `equipmentCode`를 Kafka message key로 사용하므로 같은 설비의 이벤트는
                     동일한 파티션에 저장되어 설비별 이벤트 순서가 보장됩니다.
 
-                    eventId, eventTime, processCode, stationCode, equipmentCode, equipmentType,
+                    eventId, eventTime, processCode, equipmentCode, equipmentType,
                     equipmentStatus, eventType은 테이블 컬럼을 사용하고 센서·공정 상세 데이터는
                     eventJson 필드에 포함합니다.
 
@@ -138,7 +141,7 @@ public class ManufacturingKafkaTestController {
     @PostMapping("/send-sample")
     public CompletableFuture<ApiResponse<KafkaPublishResult>> sendSample() {
         // event_time 기준 다음 미전송 SampleDB 이벤트 1건 발행
-        return rawEventService.sendNextUnsent()
+        return rawEventService.sendNextReady()
                 .thenApply(result -> ApiResponse.success(
                         result,
                         "Next SampleDB event_json sent to Kafka raw topic"
@@ -154,7 +157,7 @@ public class ManufacturingKafkaTestController {
                     """
     )
     @GetMapping("/events")
-    public ApiResponse<List<StoredManufacturingEvent>> events(
+    public ApiResponse<List<StoredManufacturingEventResponse>> events(
             @Parameter(
                     description = "조회 건수. 1~100 범위로 제한됩니다.",
                     example = "20"
@@ -165,6 +168,17 @@ public class ManufacturingKafkaTestController {
         return ApiResponse.success(
                 rawEventService.findEvents(limit),
                 "SampleDB manufacturing_event_json rows"
+        );
+    }
+
+    @PostMapping("/equipment/{equipmentCode}/recover")
+    public ApiResponse<EquipmentStatusEvent> recoverEquipment(
+            @PathVariable String equipmentCode,
+            @RequestParam(defaultValue = "Administrator recovery") String reason
+    ) {
+        return ApiResponse.success(
+                equipmentStateService.recover(equipmentCode, reason),
+                "Equipment recovery committed; status event will be published after commit"
         );
     }
 

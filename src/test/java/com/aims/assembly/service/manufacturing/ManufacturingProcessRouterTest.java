@@ -65,7 +65,7 @@ class ManufacturingProcessRouterTest {
     private ManufacturingRawEvent event(ProcessCode processCode) {
         return new ManufacturingRawEvent(
                 1L, "EVT-001", LocalDateTime.of(2026, 6, 18, 10, 0),
-                10L, 20L, processCode, "ST-01", "EQ-01",
+                10L, 20L, processCode, "EQ-01",
                 "TEST", "RUNNING", "PROCESS_STATUS", Map.of()
         );
     }
