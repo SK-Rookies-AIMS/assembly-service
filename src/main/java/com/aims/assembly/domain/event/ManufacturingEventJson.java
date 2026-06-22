@@ -2,7 +2,7 @@ package com.aims.assembly.domain.event;
 
 import com.aims.assembly.domain.car.CarMaster;
 import com.aims.assembly.domain.commons.BaseEntity;
-import com.aims.assembly.domain.enums.ProcessCode;
+import com.aims.assembly.domain.enums.*;
 import com.aims.assembly.domain.equipment.Equipment;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
@@ -16,12 +16,18 @@ import java.time.LocalDateTime;
 @Table(
         name = "manufacturing_event_json",
         indexes = {
-                @Index(name = "idx_event_time_sent", columnList = "event_time, is_sent"),
-                @Index(name = "idx_process_time", columnList = "process_code, event_time"),
-                @Index(name = "idx_equipment_time", columnList = "equipment_code, event_time"),
-                @Index(name = "idx_car_time", columnList = "car_master_id, event_time"),
-                @Index(name = "idx_event_id", columnList = "event_id"),
-                @Index(name = "idx_equipment_id_time", columnList = "equipment_id, event_time")
+                @Index(name = "idx_event_time_sent",
+                        columnList = "event_time, is_sent"),
+                @Index(name = "idx_process_time",
+                        columnList = "process_code, event_time"),
+                @Index(name = "idx_equipment_time",
+                        columnList = "equipment_code, event_time"),
+                @Index(name = "idx_car_time",
+                        columnList = "car_master_id, event_time"),
+                @Index(name = "idx_event_id",
+                        columnList = "event_id"),
+                @Index(name = "idx_equipment_id_time",
+                        columnList = "equipment_id, event_time")
         }
 )
 @Getter
@@ -34,17 +40,13 @@ public class ManufacturingEventJson extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "event_id", nullable = false, length = 100)
-    private String eventId;
-
-    @Column(name = "event_time", nullable = false)
-    private LocalDateTime eventTime;
-
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(
             name = "car_master_id",
             nullable = false,
-            foreignKey = @ForeignKey(name = "fk_manufacturing_event_json_car_master")
+            foreignKey = @ForeignKey(
+                    name = "fk_manufacturing_event_json_car_master"
+            )
     )
     private CarMaster carMaster;
 
@@ -52,12 +54,24 @@ public class ManufacturingEventJson extends BaseEntity {
     @JoinColumn(
             name = "equipment_id",
             nullable = false,
-            foreignKey = @ForeignKey(name = "fk_manufacturing_event_json_equipment")
+            foreignKey = @ForeignKey(
+                    name = "fk_manufacturing_event_json_equipment"
+            )
     )
     private Equipment equipment;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "event_json", nullable = false, columnDefinition = "JSON")
+    private JsonNode eventJson;
+
+    @Column(name = "event_id", nullable = false, length = 100)
+    private String eventId;
+
+    @Column(name = "event_time", nullable = false)
+    private LocalDateTime eventTime;
+
     @Enumerated(EnumType.STRING)
-    @Column(name = "process_code", nullable = false, columnDefinition = "ENUM('PRESS', 'BODY', 'PAINT', 'ASSEMBLY')")
+    @Column(name = "process_code", nullable = false)
     private ProcessCode processCode;
 
     @Column(name = "station_code", length = 50)
@@ -66,28 +80,28 @@ public class ManufacturingEventJson extends BaseEntity {
     @Column(name = "equipment_code", nullable = false, length = 50)
     private String equipmentCode;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "equipment_type", length = 50)
-    private String equipmentType;
-
-    @Column(name = "equipment_status", length = 30)
-    private String equipmentStatus;
-
-    @Column(name = "event_type", length = 50)
-    private String eventType;
-
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "event_json", nullable = false, columnDefinition = "JSON")
-    private JsonNode eventJson;
+    private EquipmentType equipmentType;
 
     @Builder.Default
-    @Column(name = "is_sent", columnDefinition = "TINYINT(1) DEFAULT 0")
+    @Enumerated(EnumType.STRING)
+    @Column(name = "dispatch_status", length = 20)
+    private DispatchStatus dispatchStatus = DispatchStatus.PENDING;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "analysis_status", length = 20)
+    private AnalysisStatus analysisStatus = AnalysisStatus.NOT_ANALYZED;
+
+    @Builder.Default
+    @Column(name = "is_sent")
     private Boolean isSent = false;
 
-    @Column(name = "sent_at")
-    private LocalDateTime sentAt;
+    @Builder.Default
+    @Column(name = "retry_count")
+    private Long retryCount = 0L;
 
-    public void markSent(LocalDateTime sentAt) {
-        this.isSent = true;
-        this.sentAt = sentAt;
-    }
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
 }
