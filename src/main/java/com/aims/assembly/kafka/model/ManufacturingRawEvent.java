@@ -16,7 +16,6 @@ public record ManufacturingRawEvent(
         Long carMasterId,
         Long equipmentId,
         ProcessCode processCode,
-        String stationCode,
         String equipmentCode,
         String equipmentType,
         String equipmentStatus,

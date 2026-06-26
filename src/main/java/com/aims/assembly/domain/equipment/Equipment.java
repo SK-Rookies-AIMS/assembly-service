@@ -1,5 +1,7 @@
 package com.aims.assembly.domain.equipment;
 
+import com.aims.assembly.domain.enums.EquipmentHealthStatus;
+import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.domain.enums.EquipmentType;
 import com.aims.assembly.domain.enums.ProcessCode;
 import jakarta.persistence.Column;
@@ -11,6 +13,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -26,10 +30,6 @@ public class Equipment {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "process_code", columnDefinition = "ENUM('PRESS', 'BODY', 'PAINT', 'ASSEMBLY')")
-    private ProcessCode processCode;
-
     @Column(name = "equipment_code", length = 50)
     private String equipmentCode;
 
@@ -37,9 +37,53 @@ public class Equipment {
     private String equipmentName;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "equipment_type", columnDefinition = "ENUM('HYDRAULIC_PRESS', 'ROBOT_ARM', 'CAMERA', 'CONVEYOR')")
+    @Column(name = "equipment_type")
     private EquipmentType equipmentType;
 
-    @Column(name = "created_at")
+    @Enumerated(EnumType.STRING)
+    @Column(name = "process_code")
+    private ProcessCode processCode;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "current_status")
+    private EquipmentOperationStatus currentStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "health_status")
+    private EquipmentHealthStatus healthStatus;
+
+    @Column(name = "last_fault_time")
+    private LocalDateTime lastFaultTime;
+
+    @Column(name = "last_recovered_time")
+    private LocalDateTime lastRecoveredTime;
+
+    @Column(name = "reason", length = 255)
+    private String reason;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    public void markFault(LocalDateTime faultTime, String reason, boolean stopRequired) {
+        this.healthStatus = EquipmentHealthStatus.ABNORMAL;
+        if (stopRequired) {
+            this.currentStatus = EquipmentOperationStatus.FAULT;
+        } else if (this.currentStatus == EquipmentOperationStatus.RUNNING) {
+            this.currentStatus = EquipmentOperationStatus.WARNING;
+        }
+        this.lastFaultTime = faultTime;
+        this.reason = reason;
+    }
+
+    public void recover(LocalDateTime recoveredTime, String reason) {
+        this.healthStatus = EquipmentHealthStatus.NORMAL;
+        this.currentStatus = EquipmentOperationStatus.RUNNING;
+        this.lastRecoveredTime = recoveredTime;
+        this.reason = reason;
+    }
 }

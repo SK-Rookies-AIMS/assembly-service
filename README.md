@@ -140,7 +140,7 @@ SampleDB의 제조 이벤트를 재생하고 공정 분석, AI 분석, 설비 �
 | --- | --- | --- | ---: |
 | `factory.manufacturing.raw` | SampleDB 원천 제조 이벤트 | `equipmentCode` | 2 |
 | `factory.manufacturing.analysis` | 공정 위험, 병목, 불량 전이 분석 결과 | 기본 `equipmentCode`, 불량 전이는 `carId → carMasterId → equipmentCode` | 2 |
-| `factory.manufacturing.equipment` | 설비 상태와 가동률 이벤트 | `equipmentCode` | 2 |
+| `factory.equipment.status` | 설비 고장·복구 상태 이벤트 | `equipmentCode` | 2 |
 | `factory.manufacturing.alert` | 위험 조건을 만족한 알림 이벤트 | `equipmentCode` | 2 |
 
 ### Redis
@@ -193,7 +193,7 @@ flowchart TD
     EQUIPMENT_PRODUCER["ManufacturingKafkaProducer.sendEquipment"]
     ALERT_PRODUCER["ManufacturingKafkaProducer.sendAlert"]
 
-    EQUIPMENT_TOPIC[["Topic: factory.manufacturing.equipment<br/>Partitions: 2<br/>Key: equipmentCode"]]
+    EQUIPMENT_TOPIC[["Topic: factory.equipment.status<br/>Partitions: 2<br/>Key: equipmentCode"]]
     ALERT_TOPIC[["Topic: factory.manufacturing.alert<br/>Partitions: 2<br/>Key: equipmentCode"]]
 
     DASHBOARD_GROUP["dashboard-consumer-group<br/>concurrency: 2<br/>설비 상태 이벤트 소비<br/>현재 로그 및 추적 이력 기록"]
@@ -259,7 +259,7 @@ Producer는 Kafka Topic에 메시지를 발행하는 주체이며 Consumer Group
 | `factory.manufacturing.raw` | Test API, `ManufacturingEventReplayScheduler` | `ai-consumer-group` | 병목 분석과 불량 전이 예측 결과 발행 |
 | `factory.manufacturing.analysis` | Manufacturing Consumer, AI Consumer | `equipment-consumer-group` | Analysis를 설비 상태로 변환하여 Equipment Topic 발행 |
 | `factory.manufacturing.analysis` | Manufacturing Consumer, AI Consumer | `alert-analysis-consumer-group` | 위험 조건 판정 후 Alert Topic 발행 |
-| `factory.manufacturing.equipment` | Equipment Consumer | `dashboard-consumer-group` | 대시보드용 설비 상태 이벤트 소비 |
+| `factory.equipment.status` | Equipment Consumer | `dashboard-consumer-group` | 후속 이벤트 차단·복구 및 대시보드 상태 소비 |
 | `factory.manufacturing.alert` | Alert Analysis Consumer | `alert-notification-consumer-group` | 실시간 알림 대상 이벤트 소비 |
 
 Producer 메서드와 발행 대상은 다음과 같습니다.
@@ -268,7 +268,7 @@ Producer 메서드와 발행 대상은 다음과 같습니다.
 | --- | --- | --- |
 | `ManufacturingKafkaProducer.sendRaw()` | `factory.manufacturing.raw` | `equipmentCode` |
 | `ManufacturingKafkaProducer.sendAnalysis()` | `factory.manufacturing.analysis` | 기본 `equipmentCode`, 불량 전이는 `carId → carMasterId → equipmentCode` |
-| `ManufacturingKafkaProducer.sendEquipment()` | `factory.manufacturing.equipment` | `equipmentCode` |
+| `ManufacturingKafkaProducer.sendEquipment()` | `factory.equipment.status` | `equipmentCode` |
 | `ManufacturingKafkaProducer.sendAlert()` | `factory.manufacturing.alert` | `equipmentCode` |
 
 ### Consumer Group 구성 원칙

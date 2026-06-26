@@ -40,7 +40,6 @@ public class ProcessEventResponse {
         private String dataType;
         private String processCode;
         private String equipmentType;
-        private String stationCode;
         private LocalDateTime eventTime;
         private String metricCode;
         private Double metricValue;

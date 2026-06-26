@@ -96,6 +96,7 @@ app:
       enabled: ${KAFKA_REPLAY_SCHEDULER_ENABLED:false}
       fixed-delay-ms: ${KAFKA_REPLAY_FIXED_DELAY_MS:5000}
       batch-size: ${KAFKA_REPLAY_BATCH_SIZE:10}
+      max-retries: ${KAFKA_REPLAY_MAX_RETRIES:3}
 
     security-protocol: SASL_SSL
     sasl-mechanism: AWS_MSK_IAM
@@ -113,7 +114,7 @@ app:
         name: factory.manufacturing.alert
         partitions: 2
       equipment:
-        name: factory.manufacturing.equipment
+        name: factory.equipment.status
         partitions: 2
 
 logging:

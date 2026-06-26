@@ -15,6 +15,16 @@ import java.util.UUID;
 /**
  * 제조 원천 이벤트에서 공정 위험도와 AI 위험도를 계산하고 후속 이벤트로 변환한다.
  * 실제 모델 연동 전에도 PRD의 입력 필드와 판정 기준을 검증할 수 있도록 규칙 기반으로 계산한다.
+ *
+ * <p>riskScore 계산 기준 (2026-06 개정):
+ * <pre>riskScore = processRisk</pre>
+ * bottleneckRisk / defectTransferRisk 는 analyzeBottleneck / analyzeDefectTransfer AI 경로에서만
+ * 사용되며, detail API 응답에는 포함되지 않는다.
+ *
+ * <p>설비 이상 판단 기준:
+ * equipmentStatus(envelope) / equipmentStatus.operationStatus / equipmentStatus.healthStatus 가
+ * FAULT | STOPPED | ERROR | DOWN 중 하나이거나, eventType 에 해당 키워드가 포함된 경우.
+ * 수치 계산식은 더 이상 equipmentFault 판단에 사용되지 않는다.
  */
 @Component
 public class ManufacturingEventAnalyzer {
@@ -29,6 +39,46 @@ public class ManufacturingEventAnalyzer {
 
     public ManufacturingAnalysisEvent analyzeDefectTransfer(ManufacturingRawEvent event) {
         return analyze(event, "DEFECT_TRANSFER_PREDICTION");
+    }
+
+    /**
+     * /analysis-results/{eventId}/detail API 에서 processRisk 계산 과정을 노출할 때 사용.
+     * bottleneckRisk / defectTransferRisk / equipmentRisk 계산은 포함하지 않는다.
+     */
+    public AnalysisDetail analyzeDetail(ManufacturingRawEvent event) {
+        double cycleTimeSec = number(event.eventJson(), "processMetrics", "cycleTimeSec");
+        double stationDelaySec = number(event.eventJson(), "processMetrics", "stationDelaySec");
+
+        ProcessComponent processComponent = processComponent(event, cycleTimeSec, stationDelaySec);
+        double processRiskScore = round(clamp(processComponent.score()));
+
+        // equipmentFault: 상태값 기반 판단만 수행 (수치 계산식 제거)
+        boolean equipmentFault = isEquipmentAbnormalStatus(event);
+        boolean sequenceError = event.processCode() == ProcessCode.ASSEMBLY
+                && number(event.eventJson(), "processData", "assembly", "sequenceErrorCount") > 0;
+
+        boolean isAbnormal = processRiskScore >= 60 || equipmentFault || sequenceError;
+        String abnormalType = abnormalType(processRiskScore, equipmentFault, sequenceError);
+        String equipmentStatusReason = buildEquipmentStatusReason(event, equipmentFault);
+        String message = mainReason(event.processCode(), processRiskScore, equipmentFault, sequenceError, "PROCESS_RISK_ANALYSIS");
+
+        return new AnalysisDetail(
+                "0-100",
+                processRiskScore,
+                riskLevel(processRiskScore),
+                isAbnormal,
+                abnormalType,
+                "riskScore = processRisk",
+                new ProcessRiskDetail(
+                        processRiskScore,
+                        processComponent.usedFields(),
+                        processComponent.formula()
+                ),
+                equipmentFault,
+                equipmentStatusReason,
+                decisionReason(processRiskScore, equipmentFault, sequenceError),
+                message
+        );
     }
 
     private ManufacturingAnalysisEvent analyze(
@@ -53,7 +103,7 @@ public class ManufacturingEventAnalyzer {
                 number(event.eventJson(), "sensor", "robotArmVibration", "vibrationScore");
         double maxTemperature = number(event.eventJson(), "sensor", "thermal", "maxTemperature");
 
-        // 대기열, WIP, 지연 시간, 유휴 시간 기반 병목 위험도 계산
+        // 대기열, WIP, 지연 시간, 유휴 시간 기반 병목 위험도 계산 (다른 팀원 담당 영역 - 유지)
         double bottleneckRisk = clamp(
                 stationDelaySec * 5
                         + waitingTimeSec * 2
@@ -63,7 +113,7 @@ public class ManufacturingEventAnalyzer {
                         + Math.max(0, cycleTimeSec - targetCycleTime(event))
         );
 
-        // 전류, 진동, 유휴 시간, 원천 설비 상태 기반 설비 위험도 계산
+        // 전류, 진동, 유휴 시간, 원천 설비 상태 기반 설비 위험도 계산 (참고값)
         double equipmentRisk = clamp(
                 rmsAmpere * 8
                         + vibrationScore * 45
@@ -72,7 +122,7 @@ public class ManufacturingEventAnalyzer {
                         + healthStatusWeight(event)
         );
 
-        // 전류, 일반 진동, 로봇 진동, 열화상 기반 불량 전이 위험도 계산
+        // 전류, 일반 진동, 로봇 진동, 열화상 기반 불량 전이 위험도 계산 (다른 팀원 담당 영역 - 유지)
         double defectTransferRisk = clamp(
                 rmsAmpere * 6
                         + vibrationScore * 35
@@ -85,23 +135,19 @@ public class ManufacturingEventAnalyzer {
         ManufacturingAnalysisEvent.ProcessRisk processRiskScores =
                 processRiskScores(event.processCode(), processRisk);
 
+        // riskScore = processRisk (단독). bottleneck/defect/equipment 는 최종 score에 미포함
         double overallRisk = switch (analysisType) {
             case "BOTTLENECK_ANALYSIS" -> bottleneckRisk;
             case "DEFECT_TRANSFER_PREDICTION" -> defectTransferRisk;
-            default -> clamp(
-                    bottleneckRisk * 0.30
-                            + defectTransferRisk * 0.20
-                            + equipmentRisk * 0.25
-                            + processRisk * 0.25
-            );
+            default -> clamp(processRisk);
         };
         overallRisk = round(overallRisk);
         String riskLevel = riskLevel(overallRisk);
 
         boolean bottleneck = bottleneckRisk >= 60;
         boolean qualityDefect = isQualityDefect(event, defectTransferRisk);
-        boolean equipmentFault = equipmentRisk >= 60
-                || "FAULT".equalsIgnoreCase(event.equipmentStatus());
+        // equipmentFault: 상태값 기반 판단 (수치 계산식 제거)
+        boolean equipmentFault = isEquipmentAbnormalStatus(event);
         boolean sequenceError = event.processCode() == ProcessCode.ASSEMBLY
                 && number(event.eventJson(), "processData", "assembly", "sequenceErrorCount") > 0;
 
@@ -120,7 +166,6 @@ public class ManufacturingEventAnalyzer {
                 text(event.eventJson(), "location", "factoryCode"),
                 text(event.eventJson(), "location", "lineCode"),
                 event.processCode(),
-                event.stationCode(),
                 event.equipmentCode(),
                 text(event.eventJson(), "equipment", "equipmentName"),
                 event.equipmentType(),
@@ -138,14 +183,16 @@ public class ManufacturingEventAnalyzer {
                 calculateOperationRate(cycleTimeSec, processingTimeSec, equipmentIdleTimeSec),
                 riskLevel,
                 new ManufacturingAnalysisEvent.AnalysisResult(
-                        overallRisk >= 60,
+                        "BOTTLENECK_ANALYSIS".equals(analysisType) || "DEFECT_TRANSFER_PREDICTION".equals(analysisType)
+                                ? overallRisk >= 60 || bottleneck || qualityDefect || equipmentFault || sequenceError
+                                : overallRisk >= 60 || equipmentFault || sequenceError,
                         bottleneck,
                         qualityDefect,
                         equipmentFault,
                         sequenceError
                 ),
                 new ManufacturingAnalysisEvent.Reason(
-                        mainReason(bottleneck, qualityDefect, equipmentFault, sequenceError),
+                        mainReason(event.processCode(), overallRisk, equipmentFault, sequenceError, analysisType),
                         detailReasons
                 ),
                 new ManufacturingAnalysisEvent.Recommendation(
@@ -164,7 +211,6 @@ public class ManufacturingEventAnalyzer {
                 analysis.factoryCode(),
                 analysis.lineCode(),
                 analysis.processCode(),
-                analysis.stationCode(),
                 analysis.equipmentCode(),
                 analysis.equipmentName(),
                 analysis.equipmentType(),
@@ -181,7 +227,7 @@ public class ManufacturingEventAnalyzer {
     }
 
     public ManufacturingAlertEvent toAlertEvent(ManufacturingAnalysisEvent analysis) {
-        // WARNING 또는 CRITICAL 분석 결과를 OPEN 상태의 알림으로 변환
+        // WARNING 또는 CRITICAL 분석 결과(processRisk 기반)를 OPEN 상태의 알림으로 변환
         return new ManufacturingAlertEvent(
                 "ALT-" + UUID.randomUUID(),
                 analysis.eventId(),
@@ -190,12 +236,13 @@ public class ManufacturingEventAnalyzer {
                 analysis.factoryCode(),
                 analysis.lineCode(),
                 analysis.processCode(),
-                analysis.stationCode(),
                 analysis.equipmentCode(),
                 analysis.equipmentName(),
-                alertType(analysis),
+                analysis.carMasterId(),
+                null,       // equipmentId: analysis 이벤트에 없음 - null 허용
+                "PROCESS_RISK",
                 alertTitle(analysis),
-                analysis.equipmentCode() + " 설비의 제조 위험이 감지되었습니다.",
+                analysis.equipmentCode() + " 설비의 제조 공정 위험이 감지되었습니다. (processRisk 기반)",
                 analysis.riskLevel(),
                 analysis.riskScores().overallRiskScore(),
                 "OPEN",
@@ -203,6 +250,44 @@ public class ManufacturingEventAnalyzer {
                 analysis.reason().detailReasons(),
                 analysis.recommendation().message()
         );
+    }
+
+    /**
+     * Case B: 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 감지 시 즉시 발행할 alert 이벤트 생성.
+     * riskScore 분석 결과와 무관하게 raw 이벤트 수신 직후 발행된다.
+     */
+    public ManufacturingAlertEvent toEquipmentStatusAlert(ManufacturingRawEvent event) {
+        String statusReason = buildEquipmentStatusReason(event, true);
+        return new ManufacturingAlertEvent(
+                "ALT-" + UUID.randomUUID(),
+                event.eventId(),
+                null,       // raw 단계이므로 analysisId 없음
+                LocalDateTime.now(),
+                text(event.eventJson(), "location", "factoryCode"),
+                text(event.eventJson(), "location", "lineCode"),
+                event.processCode(),
+                event.equipmentCode(),
+                text(event.eventJson(), "equipment", "equipmentName"),
+                event.carMasterId(),
+                event.equipmentId(),
+                "EQUIPMENT_STATUS",
+                "설비 이상 감지",
+                event.equipmentCode() + " 설비 이상 상태가 감지되었습니다. " + statusReason,
+                "CRITICAL",
+                100.0,
+                "OPEN",
+                true,
+                List.of(statusReason),
+                "설비 상태를 즉시 확인하고 안전 절차를 따르세요."
+        );
+    }
+
+    /**
+     * 설비 이상 여부 공개 판단 메서드.
+     * Consumer에서 Case B alert 발행 여부 결정에 사용된다.
+     */
+    public boolean isEquipmentAbnormal(ManufacturingRawEvent event) {
+        return isEquipmentAbnormalStatus(event);
     }
 
     public boolean requiresAlert(ManufacturingAnalysisEvent analysis) {
@@ -221,7 +306,15 @@ public class ManufacturingEventAnalyzer {
             double cycleTimeSec,
             double stationDelaySec
     ) {
-        return clamp(switch (event.processCode()) {
+        return processComponent(event, cycleTimeSec, stationDelaySec).score();
+    }
+
+    private ProcessComponent processComponent(
+            ManufacturingRawEvent event,
+            double cycleTimeSec,
+            double stationDelaySec
+    ) {
+        return switch (event.processCode()) {
             case PRESS -> {
                 boolean countIncrease = bool(
                         event.eventJson(),
@@ -230,10 +323,25 @@ public class ManufacturingEventAnalyzer {
                         "countIncreaseYn"
                 );
                 double rmsAmpere = number(event.eventJson(), "sensor", "current", "rmsAmpere");
-                yield stationDelaySec * 6
-                        + Math.max(0, cycleTimeSec - targetCycleTime(event)) * 5
+                double targetCycleTimeSec = targetCycleTime(event);
+                double cycleOverTargetSec = Math.max(0, cycleTimeSec - targetCycleTimeSec);
+                double score = clamp(stationDelaySec * 6
+                        + cycleOverTargetSec * 5
                         + rmsAmpere * 8
-                        + (countIncrease ? 0 : 35);
+                        + (countIncrease ? 0 : 35));
+                yield new ProcessComponent(
+                        score,
+                        Map.of(
+                                "processCode", event.processCode().name(),
+                                "stationDelaySec", stationDelaySec,
+                                "cycleTimeSec", cycleTimeSec,
+                                "targetCycleTimeSec", targetCycleTimeSec,
+                                "cycleOverTargetSec", cycleOverTargetSec,
+                                "rmsAmpere", rmsAmpere,
+                                "countIncreaseYn", countIncrease
+                        ),
+                        "clamp(stationDelaySec * 6 + max(0, cycleTimeSec - targetCycleTimeSec) * 5 + rmsAmpere * 8 + (countIncreaseYn ? 0 : 35))"
+                );
             }
             case BODY -> {
                 double robotScore = number(
@@ -248,7 +356,18 @@ public class ManufacturingEventAnalyzer {
                         "robotArmVibration",
                         "frequencyHz"
                 );
-                yield robotScore * 70 + Math.max(0, frequency - 100) * 0.08;
+                double frequencyOver100 = Math.max(0, frequency - 100);
+                double score = clamp(robotScore * 70 + frequencyOver100 * 0.08);
+                yield new ProcessComponent(
+                        score,
+                        Map.of(
+                                "processCode", event.processCode().name(),
+                                "robotVibrationScore", robotScore,
+                                "frequencyHz", frequency,
+                                "frequencyOver100Hz", frequencyOver100
+                        ),
+                        "clamp(robotVibrationScore * 70 + max(0, frequencyHz - 100) * 0.08)"
+                );
             }
             case PAINT -> {
                 double defectScore =
@@ -257,9 +376,22 @@ public class ManufacturingEventAnalyzer {
                         number(event.eventJson(), "processData", "paint", "thermalStdTemp");
                 double surfaceQuality =
                         number(event.eventJson(), "processData", "paint", "surfaceQualityScore");
-                yield defectScore * 65
+                double qualityUnder80 = Math.max(0, 80 - surfaceQuality);
+                double score = clamp(defectScore * 65
                         + thermalDeviation * 5
-                        + Math.max(0, 80 - surfaceQuality);
+                        + qualityUnder80);
+                yield new ProcessComponent(
+                        score,
+                        Map.of(
+                                "processCode", event.processCode().name(),
+                                "defectScore", defectScore,
+                                "thermalStdTemp", thermalDeviation,
+                                "surfaceQualityScore", surfaceQuality,
+                                "surfaceQualityUnder80", qualityUnder80,
+                                "visionLabel", String.valueOf(text(event.eventJson(), "processData", "paint", "visionLabel"))
+                        ),
+                        "clamp(defectScore * 65 + thermalStdTemp * 5 + max(0, 80 - surfaceQualityScore))"
+                );
             }
             case ASSEMBLY -> {
                 double sequenceErrors = number(
@@ -280,9 +412,19 @@ public class ManufacturingEventAnalyzer {
                         "assembly",
                         "fasteningErrorCount"
                 );
-                yield sequenceErrors * 35 + missingParts * 40 + fasteningErrors * 30;
+                double score = clamp(sequenceErrors * 35 + missingParts * 40 + fasteningErrors * 30);
+                yield new ProcessComponent(
+                        score,
+                        Map.of(
+                                "processCode", event.processCode().name(),
+                                "sequenceErrorCount", sequenceErrors,
+                                "missingPartCount", missingParts,
+                                "fasteningErrorCount", fasteningErrors
+                        ),
+                        "clamp(sequenceErrorCount * 35 + missingPartCount * 40 + fasteningErrorCount * 30)"
+                );
             }
-        });
+        };
     }
 
     private ManufacturingAnalysisEvent.ProcessRisk processRiskScores(
@@ -310,7 +452,66 @@ public class ManufacturingEventAnalyzer {
         return defectTransferRisk >= 60
                 || "DEFECT".equalsIgnoreCase(
                         text(event.eventJson(), "processData", "paint", "visionLabel")
-                );
+                )
+                || number(event.eventJson(), "processData", "assembly", "missingPartCount") > 0
+                || number(event.eventJson(), "processData", "assembly", "fasteningErrorCount") > 0;
+    }
+
+    /**
+     * 설비 이상 상태 판단 (상태값 기반).
+     * FAULT / STOPPED / ERROR / DOWN 상태값 또는 해당 키워드를 포함한 eventType 을 기준으로 한다.
+     * 수치 계산식(equipmentRisk >= 60) 은 사용하지 않는다.
+     */
+    private boolean isEquipmentAbnormalStatus(ManufacturingRawEvent event) {
+        // 1) envelope 컬럼의 equipmentStatus 확인
+        if (isAbnormalStatusValue(event.equipmentStatus())) return true;
+        // 2) event_json 내부 equipmentStatus.operationStatus 확인
+        if (isAbnormalStatusValue(text(event.eventJson(), "equipmentStatus", "operationStatus"))) return true;
+        // 3) event_json 내부 equipmentStatus.healthStatus 확인
+        if (isAbnormalStatusValue(text(event.eventJson(), "equipmentStatus", "healthStatus"))) return true;
+        // 4) eventType 키워드 기반 확인
+        String eventType = event.eventType();
+        if (eventType != null) {
+            String upper = eventType.toUpperCase();
+            return upper.contains("FAULT") || upper.contains("STOPPED")
+                    || upper.contains("ERROR") || upper.contains("DOWN")
+                    || upper.contains("FAILURE");
+        }
+        return false;
+    }
+
+    private boolean isAbnormalStatusValue(String status) {
+        if (status == null) return false;
+        String upper = status.toUpperCase();
+        return upper.equals("FAULT") || upper.equals("STOPPED")
+                || upper.equals("ERROR") || upper.equals("DOWN");
+    }
+
+    private String buildEquipmentStatusReason(ManufacturingRawEvent event, boolean isAbnormal) {
+        if (!isAbnormal) return "Equipment status is normal.";
+        StringBuilder sb = new StringBuilder("Equipment status indicates abnormal condition.");
+        String topStatus = event.equipmentStatus();
+        if (isAbnormalStatusValue(topStatus)) {
+            sb.append(" equipmentStatus(envelope)=").append(topStatus);
+        }
+        String opStatus = text(event.eventJson(), "equipmentStatus", "operationStatus");
+        if (isAbnormalStatusValue(opStatus)) {
+            sb.append(" operationStatus=").append(opStatus);
+        }
+        String healthStatus = text(event.eventJson(), "equipmentStatus", "healthStatus");
+        if (isAbnormalStatusValue(healthStatus)) {
+            sb.append(" healthStatus=").append(healthStatus);
+        }
+        String eventType = event.eventType();
+        if (eventType != null) {
+            String upper = eventType.toUpperCase();
+            if (upper.contains("FAULT") || upper.contains("STOPPED")
+                    || upper.contains("ERROR") || upper.contains("DOWN")
+                    || upper.contains("FAILURE")) {
+                sb.append(" eventType=").append(eventType);
+            }
+        }
+        return sb.toString();
     }
 
     private double targetCycleTime(ManufacturingRawEvent event) {
@@ -332,22 +533,35 @@ public class ManufacturingEventAnalyzer {
     }
 
     private String mainReason(
-            boolean bottleneck,
-            boolean qualityDefect,
+            ProcessCode processCode,
+            double overallRisk,
             boolean equipmentFault,
-            boolean sequenceError
+            boolean sequenceError,
+            String analysisType
     ) {
         if (equipmentFault) {
-            return "설비 센서 또는 상태값에서 고장 위험이 감지되었습니다.";
-        }
-        if (qualityDefect) {
-            return "품질 센서와 공정 데이터에서 불량 위험이 감지되었습니다.";
+            return "설비 상태값에서 이상(FAULT/STOPPED/ERROR/DOWN)이 감지되었습니다.";
         }
         if (sequenceError) {
             return "의장 공정의 작업 순서 오류가 감지되었습니다.";
         }
-        if (bottleneck) {
-            return "사이클타임과 대기열 증가로 병목 위험이 감지되었습니다.";
+        if (!"BOTTLENECK_ANALYSIS".equals(analysisType) && !"DEFECT_TRANSFER_PREDICTION".equals(analysisType)) {
+            if (overallRisk >= 80) {
+                return switch (processCode) {
+                    case PRESS -> "프레스 공정 위험이 감지되었습니다.";
+                    case BODY -> "바디 공정 위험이 감지되었습니다.";
+                    case PAINT -> "페인트 공정 위험이 감지되었습니다.";
+                    case ASSEMBLY -> "조립 공정 위험이 감지되었습니다.";
+                };
+            }
+            if (overallRisk >= 60) {
+                return switch (processCode) {
+                    case PRESS -> "프레스 공정 위험 경보가 발생했습니다.";
+                    case BODY -> "바디 공정 위험 경보가 발생했습니다.";
+                    case PAINT -> "페인트 공정 위험 경보가 발생했습니다.";
+                    case ASSEMBLY -> "조립 공정 위험 경보가 발생했습니다.";
+                };
+            }
         }
         return "주요 공정 지표가 정상 범위입니다.";
     }
@@ -361,6 +575,19 @@ public class ManufacturingEventAnalyzer {
         };
     }
 
+    private String abnormalType(double processRiskScore, boolean equipmentFault, boolean sequenceError) {
+        if (equipmentFault) return "EQUIPMENT";
+        if (sequenceError || processRiskScore >= 60) return "PROCESS";
+        return null;
+    }
+
+    private String decisionReason(double processRiskScore, boolean equipmentFault, boolean sequenceError) {
+        if (processRiskScore >= 60) return "processRisk >= 60 (riskScore = processRisk)";
+        if (equipmentFault) return "Equipment status is FAULT/STOPPED/ERROR/DOWN";
+        if (sequenceError) return "ASSEMBLY sequenceErrorCount > 0";
+        return "processRisk < 60 and no abnormal detail flag";
+    }
+
     private String recommendationMessage(ProcessCode processCode) {
         return switch (processCode) {
             case PRESS -> "프레스 설비 상태, 전류 RMS 값과 대기열을 확인하세요.";
@@ -370,31 +597,13 @@ public class ManufacturingEventAnalyzer {
         };
     }
 
-    private String alertType(ManufacturingAnalysisEvent analysis) {
-        ManufacturingAnalysisEvent.AnalysisResult result = analysis.analysisResult();
-        if (result.isEquipmentFault()) {
-            return "EQUIPMENT_FAULT";
-        }
-        if (result.isQualityDefect()) {
-            return "QUALITY_DEFECT";
-        }
-        if (result.isSequenceError()) {
-            return "ASSEMBLY_SEQUENCE_ERROR";
-        }
-        if (result.isBottleneck()) {
-            return "BOTTLENECK_RISK";
-        }
-        return "PROCESS_RISK";
-    }
-
     private String alertTitle(ManufacturingAnalysisEvent analysis) {
-        return switch (alertType(analysis)) {
-            case "EQUIPMENT_FAULT" -> "설비 고장 위험";
-            case "QUALITY_DEFECT" -> "품질 불량 위험";
-            case "ASSEMBLY_SEQUENCE_ERROR" -> "조립 순서 오류";
-            case "BOTTLENECK_RISK" -> "공정 병목 위험";
-            default -> "제조 공정 위험";
-        };
+        ManufacturingAnalysisEvent.AnalysisResult result = analysis.analysisResult();
+        if (result.isEquipmentFault()) return "설비 이상 감지";
+        if (result.isQualityDefect()) return "품질 불량 위험";
+        if (result.isSequenceError()) return "조립 순서 오류";
+        if (result.isBottleneck()) return "공정 병목 위험";
+        return "제조 공정 위험";
     }
 
     private double calculateOperationRate(
@@ -455,5 +664,41 @@ public class ManufacturingEventAnalyzer {
             current = ((Map<String, Object>) map).get(key);
         }
         return current;
+    }
+
+    /**
+     * /analysis-results/{eventId}/detail API 응답용 분석 상세 레코드.
+     * processRisk 계산 결과와 설비 이상 판단만 포함한다.
+     */
+    public record AnalysisDetail(
+            String riskScoreScale,
+            double riskScore,
+            String riskLevel,
+            boolean isAbnormal,
+            String abnormalType,
+            String overallFormula,
+            ProcessRiskDetail processRisk,
+            boolean isEquipmentAbnormal,
+            String equipmentStatusReason,
+            String finalDecisionReason,
+            String analysisMessageReason
+    ) {
+    }
+
+    /**
+     * processRisk 계산 결과 레코드. detail API 에서 계산 근거 공개용.
+     */
+    public record ProcessRiskDetail(
+            double score,
+            Map<String, Object> usedFields,
+            String formula
+    ) {
+    }
+
+    private record ProcessComponent(
+            double score,
+            Map<String, Object> usedFields,
+            String formula
+    ) {
     }
 }

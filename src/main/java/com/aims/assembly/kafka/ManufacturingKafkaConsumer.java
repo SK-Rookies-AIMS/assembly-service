@@ -7,6 +7,9 @@ import com.aims.assembly.kafka.model.ManufacturingRawEvent;
 import com.aims.assembly.common.status.KafkaErrorStatus;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.service.manufacturing.ManufacturingProcessRouter;
+import com.aims.assembly.service.equipment.EquipmentStateService;
+import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
+import com.aims.assembly.service.manufacturing.ManufacturingAnalysisResultService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -20,6 +23,12 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 제조 Kafka 파이프라인 토픽별 메시지 소비.
  * Consumer Group별 독립 처리와 후속 토픽 발행 담당.
+ *
+ * <p>alert 발행 경로:
+ * <ul>
+ *   <li>Case A: analysis topic → consumeAnalysisForAlert → riskScore WARNING/CRITICAL → alert 발행</li>
+ *   <li>Case B: raw topic → consumeRaw → 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 직접 감지 → alert 발행</li>
+ * </ul>
  */
 public class ManufacturingKafkaConsumer {
 
@@ -28,6 +37,10 @@ public class ManufacturingKafkaConsumer {
     private final ManufacturingProcessRouter processRouter;
     private final ManufacturingKafkaProducer producer;
     private final KafkaMessageTraceStore traceStore;
+    private final ManufacturingRawEventParser rawEventParser;
+    private final EquipmentStateService equipmentStateService;
+    private final ManufacturingEventJsonRepository eventRepository;
+    private final ManufacturingAnalysisResultService analysisResultService;
 
     @KafkaListener(
             topics = "${app.kafka.topics.raw.name}",
@@ -38,7 +51,7 @@ public class ManufacturingKafkaConsumer {
     )
     public void consumeRaw(ConsumerRecord<String, String> record) {
         // raw JSON을 엔티티 컬럼 기반 Kafka 모델로 역직렬화
-        ManufacturingRawEvent event = readMessage(record, ManufacturingRawEvent.class);
+        ManufacturingRawEvent event = rawEventParser.parse(record.value());
 
         // topic, partition, offset, Consumer Group 진단 이력 기록
         traceStore.recordConsumed(record, "manufacturing-consumer-group", event.eventId());
@@ -54,7 +67,27 @@ public class ManufacturingKafkaConsumer {
 
         // processCode 기반 PRESS/BODY/PAINT/ASSEMBLY 서비스 선택
         // 공정 분석 결과 생성 후 analysis 토픽 발행
-        producer.sendAnalysis(processRouter.route(event)).join();
+        try {
+            // Case B: 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 감지 시 raw 단계에서 즉시 alert 발행
+            // 분석 결과(processRisk)와 무관하게 독립적으로 발행된다
+            if (analyzer.isEquipmentAbnormal(event)) {
+                log.warn(
+                        "Equipment abnormal status detected in raw event: eventId={}, equipment={}",
+                        event.eventId(), event.equipmentCode()
+                );
+                producer.sendAlert(analyzer.toEquipmentStatusAlert(event)).join();
+            }
+
+            ManufacturingAnalysisEvent analysis = processRouter.route(event);
+            analysisResultService.save(event, analysis);
+            producer.sendAnalysis(analysis).join();
+            // NORMAL means analysis execution completed; defect/fault lives in the result payload.
+            eventRepository.markAnalysisCompleted(
+                    event.eventId(), isAbnormalAnalysis(analysis));
+        } catch (RuntimeException exception) {
+            eventRepository.markAnalysisFailed(event.eventId(), exception.getMessage());
+            throw exception;
+        }
     }
 
     @KafkaListener(
@@ -66,7 +99,7 @@ public class ManufacturingKafkaConsumer {
     )
     public void consumeRawForAi(ConsumerRecord<String, String> record) {
         // AI 분석 입력용 raw 이벤트 역직렬화
-        ManufacturingRawEvent event = readMessage(record, ManufacturingRawEvent.class);
+        ManufacturingRawEvent event = rawEventParser.parse(record.value());
 
         // AI Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "ai-consumer-group", event.eventId());
@@ -96,8 +129,10 @@ public class ManufacturingKafkaConsumer {
         // Equipment Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "equipment-consumer-group", analysis.eventId());
 
-        // 분석 결과를 설비 상태 이벤트로 변환 후 equipment 토픽 발행
-        producer.sendEquipment(analyzer.toEquipmentEvent(analysis)).join();
+        // Product/process defects do not mutate equipment state.
+        if (analysis.analysisResult().isEquipmentFault()) {
+            equipmentStateService.markFault(analysis);
+        }
     }
 
     @KafkaListener(
@@ -114,7 +149,7 @@ public class ManufacturingKafkaConsumer {
         // Alert Analysis Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "alert-analysis-consumer-group", analysis.eventId());
 
-        // 위험 기준 충족 시에만 alert 이벤트 생성 및 발행
+        // Case A: processRisk 기반 riskScore가 WARNING/CRITICAL이면 alert 발행
         if (analyzer.requiresAlert(analysis)) {
             producer.sendAlert(analyzer.toAlertEvent(analysis)).join();
         }
@@ -132,6 +167,11 @@ public class ManufacturingKafkaConsumer {
 
         // Dashboard Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "dashboard-consumer-group", event.eventId());
+        if ("RECOVERED".equals(event.changeType())) {
+            eventRepository.restoreBlockedEvents(event.equipmentId(), event.equipmentCode());
+        } else if ("FAULT".equals(event.changeType())) {
+            eventRepository.blockReadyEvents(event.equipmentId(), event.equipmentCode());
+        }
         log.info(
                 "Equipment event received: equipment={}, health={}, risk={}, partition={}",
                 event.equipmentCode(),
@@ -155,7 +195,8 @@ public class ManufacturingKafkaConsumer {
         // Alert Notification Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "alert-notification-consumer-group", event.eventId());
         log.warn(
-                "Manufacturing alert received: equipment={}, level={}, score={}, partition={}",
+                "Manufacturing alert received: type={}, equipment={}, level={}, score={}, partition={}",
+                event.alertType(),
                 event.equipmentCode(),
                 event.riskLevel(),
                 event.riskScore(),
@@ -176,5 +217,12 @@ public class ManufacturingKafkaConsumer {
                     exception
             );
         }
+    }
+
+    static boolean isAbnormalAnalysis(ManufacturingAnalysisEvent analysis) {
+        var result = analysis.analysisResult();
+        return result.isAbnormal() || result.isQualityDefect()
+                || result.isEquipmentFault() || result.isBottleneck()
+                || result.isSequenceError();
     }
 }

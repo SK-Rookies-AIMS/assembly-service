@@ -16,7 +16,6 @@ public record ManufacturingAnalysisEvent(
         String factoryCode,
         String lineCode,
         ProcessCode processCode,
-        String stationCode,
         String equipmentCode,
         String equipmentName,
         String equipmentType,

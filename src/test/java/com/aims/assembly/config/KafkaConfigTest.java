@@ -23,7 +23,7 @@ class KafkaConfigTest {
         // When & Then: 토픽별 이름과 파티션 수 검증
         assertTopic(kafkaConfig.manufacturingRawTopic(), "factory.manufacturing.raw", 2);
         assertTopic(kafkaConfig.manufacturingAnalysisTopic(), "factory.manufacturing.analysis", 2);
-        assertTopic(kafkaConfig.manufacturingEquipmentTopic(), "factory.manufacturing.equipment", 2);
+        assertTopic(kafkaConfig.manufacturingEquipmentTopic(), "factory.equipment.status", 2);
         assertTopic(kafkaConfig.manufacturingAlertTopic(), "factory.manufacturing.alert", 2);
     }
 
