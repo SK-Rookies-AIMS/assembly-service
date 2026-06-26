@@ -36,7 +36,7 @@ public class ManufacturingAnalysisResult extends BaseEntity {
     @Column(name = "process_code", length = 20, nullable = false)
     private ProcessCode processCode; // 공정 코드
 
-    @Column(name = "event_time", nullable = true)
+    @Column(name = "event_time", nullable = false)
     private LocalDateTime eventTime; // 이벤트 발생 시간
 
     @Column(name = "is_abnormal", nullable = false)

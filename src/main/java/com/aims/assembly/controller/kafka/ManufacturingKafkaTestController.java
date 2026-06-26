@@ -5,7 +5,10 @@ import com.aims.assembly.kafka.KafkaDiagnosticsService;
 import com.aims.assembly.kafka.KafkaMessageTraceStore;
 import com.aims.assembly.kafka.model.KafkaPublishResult;
 import com.aims.assembly.properties.KafkaCustomProperties;
+import com.aims.assembly.dto.kafka.ManufacturingAnalysisDetailResponse;
+import com.aims.assembly.dto.kafka.ManufacturingAnalysisResultResponse;
 import com.aims.assembly.dto.kafka.StoredManufacturingEventResponse;
+import com.aims.assembly.service.manufacturing.ManufacturingAnalysisResultQueryService;
 import com.aims.assembly.service.manufacturing.ManufacturingRawEventService;
 import com.aims.assembly.service.equipment.EquipmentStateService;
 import com.aims.assembly.kafka.model.EquipmentStatusEvent;
@@ -49,6 +52,7 @@ public class ManufacturingKafkaTestController {
     private final KafkaMessageTraceStore traceStore;
     private final KafkaDiagnosticsService diagnosticsService;
     private final EquipmentStateService equipmentStateService;
+    private final ManufacturingAnalysisResultQueryService analysisResultQueryService;
 
     @Operation(
             summary = "SampleDB의 다음 미전송 raw 이벤트 조회",
@@ -79,10 +83,10 @@ public class ManufacturingKafkaTestController {
                     경로의 ID에 해당하는 SampleDB `manufacturing_event_json` 행을 조회하고,
                     엔티티 컬럼과 `event_json`을 결합한 메시지를 `factory.manufacturing.raw`로 전송합니다.
 
-                    연결된 Equipment의 `equipmentCode`를 Kafka message key로 사용하므로 같은 설비의 이벤트는
-                    동일한 파티션에 저장되어 설비별 이벤트 순서가 보장됩니다.
+                    `car_master_id`를 Kafka message key로 사용하므로 같은 차량/제품의 제조 이벤트는
+                    동일한 파티션에 저장되어 차량/제품 기준 이벤트 순서가 보장됩니다.
 
-                    eventId, eventTime, processCode, equipmentCode, equipmentType,
+                    eventId, eventTime, carMasterId, equipmentId, processCode, equipmentCode, equipmentType,
                     equipmentStatus, eventType은 테이블 컬럼을 사용하고 센서·공정 상세 데이터는
                     eventJson 필드에 포함합니다.
 
@@ -168,6 +172,77 @@ public class ManufacturingKafkaTestController {
         return ApiResponse.success(
                 rawEventService.findEvents(limit),
                 "SampleDB manufacturing_event_json rows"
+        );
+    }
+
+    @Operation(
+            summary = "eventId 기준 제조 분석 결과 조회",
+            description = """
+                    Kafka raw consumer가 처리한 뒤 MainDB `manufacturing_analysis_result`에 저장한
+                    최신 분석 결과 1건을 eventId 기준으로 조회합니다.
+
+                    Swagger에서 raw 발행 후 consumer 처리 및 DB 저장 여부를 확인할 때 사용합니다.
+                    """
+    )
+    @GetMapping("/analysis-results/{eventId}")
+    public ApiResponse<ManufacturingAnalysisResultResponse> analysisResult(
+            @Parameter(
+                    name = "eventId",
+                    description = "제조 이벤트 ID. 예: EVT-20260601-000013",
+                    required = true
+            )
+            @PathVariable String eventId
+    ) {
+        return ApiResponse.success(
+                analysisResultQueryService.findLatestByEventId(eventId),
+                "Manufacturing analysis result"
+        );
+    }
+
+    @Operation(
+            summary = "eventId 기준 제조 분석 계산 상세 조회",
+            description = """
+                    특정 eventId의 raw payload를 기준으로 bottleneck/equipment/defect/process risk를
+                    어떤 입력값과 계산식으로 산출했는지 조회합니다.
+
+                    riskScore는 0~100점 만점 기준이며 각 세부 점수도 clamp로 0~100 범위로 제한됩니다.
+                    """
+    )
+    @GetMapping("/analysis-results/{eventId}/detail")
+    public ApiResponse<ManufacturingAnalysisDetailResponse> analysisResultDetail(
+            @Parameter(
+                    name = "eventId",
+                    description = "제조 이벤트 ID. 예: EVT-20260601-000013",
+                    required = true
+            )
+            @PathVariable String eventId
+    ) {
+        return ApiResponse.success(
+                analysisResultQueryService.findDetailByEventId(eventId),
+                "Manufacturing analysis calculation detail"
+        );
+    }
+
+    @Operation(
+            summary = "최근 제조 분석 결과 목록 조회",
+            description = """
+                    MainDB `manufacturing_analysis_result`에 저장된 최근 분석 결과를
+                    analyzedAt, createdAt 최신순으로 조회합니다.
+
+                    방금 Kafka로 발행한 이벤트가 분석 결과로 저장됐는지 Swagger에서 확인할 때 사용합니다.
+                    """
+    )
+    @GetMapping("/analysis-results")
+    public ApiResponse<List<ManufacturingAnalysisResultResponse>> analysisResults(
+            @Parameter(
+                    description = "조회 건수. 1~100 범위로 제한됩니다.",
+                    example = "20"
+            )
+            @RequestParam(defaultValue = "20") int limit
+    ) {
+        return ApiResponse.success(
+                analysisResultQueryService.findRecent(limit),
+                "Recent manufacturing analysis results"
         );
     }
 

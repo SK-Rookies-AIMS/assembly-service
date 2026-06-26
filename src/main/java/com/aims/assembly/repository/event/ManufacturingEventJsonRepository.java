@@ -158,16 +158,18 @@ public class ManufacturingEventJsonRepository {
         return updated;
     }
 
-    public int markSent(long id) {
+    public int markSent(long id, LocalDateTime eventTime) {
         return jdbcTemplate.update(
                 """
                         UPDATE manufacturing_event_json
                         SET dispatch_status = 'SENT', is_sent = 1, error_message = NULL,
+                            event_time = ?,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = ? AND dispatch_status = 'READY' AND COALESCE(is_sent, 0) = 0
-                        """, id
+                        """, eventTime, id
         );
     }
+
 
     public int markPublishFailed(long id, String errorMessage) {
         return jdbcTemplate.update(

@@ -86,8 +86,10 @@ public class ManufacturingRawEventService {
 
     private PublishOutcome publishLocked(StoredManufacturingEvent event) {
         try {
-            KafkaPublishResult result = producer.sendRaw(event).join();
-            if (repository.markSent(event.id()) != 1) {
+            // eventTime을 여기서 한 번 생성 → Kafka payload와 SampleDB event_time이 동일한 값을 가짐
+            LocalDateTime eventTime = LocalDateTime.now();
+            KafkaPublishResult result = producer.sendRaw(event, eventTime).join();
+            if (repository.markSent(event.id(), eventTime) != 1) {
                 throw new KafkaException(KafkaErrorStatus.EVENT_STATUS_UPDATE_FAILED,
                         "Failed to mark manufacturing event as SENT. id=" + event.id());
             }

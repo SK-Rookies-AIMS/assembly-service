@@ -6,7 +6,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * WARNING 또는 CRITICAL 분석 결과에서 생성되는 실시간 알림 메시지.
+ * WARNING / CRITICAL 분석 결과 또는 설비 이상 상태에서 생성되는 실시간 알림 메시지.
+ *
+ * <p>alertType 구분:
+ * <ul>
+ *   <li>{@code PROCESS_RISK} - 제조 공정 분석 결과 riskScore(processRisk) >= 60</li>
+ *   <li>{@code EQUIPMENT_STATUS} - 설비 상태값(FAULT/STOPPED/ERROR/DOWN) 이상 감지</li>
+ * </ul>
+ * alert topic message key 는 {@code alertId} 를 사용한다.
  */
 public record ManufacturingAlertEvent(
         String alertId,
@@ -18,6 +25,8 @@ public record ManufacturingAlertEvent(
         ProcessCode processCode,
         String equipmentCode,
         String equipmentName,
+        Long carMasterId,
+        Long equipmentId,
         String alertType,
         String alertTitle,
         String alertMessage,

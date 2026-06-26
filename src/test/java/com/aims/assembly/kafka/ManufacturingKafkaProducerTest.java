@@ -14,6 +14,7 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -27,6 +28,7 @@ import java.util.concurrent.CompletionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
@@ -65,9 +67,10 @@ class ManufacturingKafkaProducerTest {
                         traceStore
                 );
         ManufacturingAnalysisEvent event = mock(ManufacturingAnalysisEvent.class);
-        when(event.carId()).thenReturn("CAR-000001");
+        when(event.carMasterId()).thenReturn(700L);
+        when(event.eventId()).thenReturn("EVT-000");
 
-        assertThat(producer.analysisMessageKey(event)).isEqualTo("CAR-000001");
+        assertThat(producer.analysisMessageKey(event)).isEqualTo("700");
     }
 
     @Test
@@ -83,7 +86,7 @@ class ManufacturingKafkaProducerTest {
         ManufacturingAnalysisEvent event = mock(ManufacturingAnalysisEvent.class);
         when(event.carMasterId()).thenReturn(701L);
 
-        assertThat(producer.analysisMessageKey(event)).isEqualTo("CAR_MASTER-701");
+        assertThat(producer.analysisMessageKey(event)).isEqualTo("701");
     }
 
     @Test
@@ -97,9 +100,10 @@ class ManufacturingKafkaProducerTest {
                         traceStore
                 );
         ManufacturingAnalysisEvent event = mock(ManufacturingAnalysisEvent.class);
-        when(event.equipmentCode()).thenReturn("EQ_PRESS_001");
+        when(event.carMasterId()).thenReturn(702L);
+        when(event.eventId()).thenReturn("EVT-002");
 
-        assertThat(producer.analysisMessageKey(event)).isEqualTo("EQ_PRESS_001");
+        assertThat(producer.analysisMessageKey(event)).isEqualTo("702");
     }
 
     @Test
@@ -110,18 +114,21 @@ class ManufacturingKafkaProducerTest {
         ManufacturingKafkaProducer producer =
                 new ManufacturingKafkaProducer(kafkaTemplate, objectMapper, properties, traceStore);
         ManufacturingRawEvent payload = new ManufacturingRawEvent(
-                1L, "EVT-001", LocalDateTime.of(2026, 6, 18, 10, 0),
+                1L, "EVT-001", null,
                 10L, 20L, ProcessCode.PRESS, "EQ_PRESS_01",
                 "HYDRAULIC_PRESS", "RUNNING", "PROCESS_STATUS",
                 Map.of("temperature", 42.5)
         );
-        StoredManufacturingEvent event = stored(payload, "{\"eventId\":\"EVT-001\"}", "CAR-001");
+        StoredManufacturingEvent event = stored(payload, "{\"eventId\":\"EVT-001\"}", null);
+        String message = "{\"processCode\":\"PRESS\",\"eventJson\":{\"eventId\":\"EVT-001\"}}";
+        LocalDateTime beforeSend = LocalDateTime.now();
+        when(objectMapper.writeValueAsString(any(ManufacturingRawEvent.class))).thenReturn(message);
 
         // Given: JSON 직렬화 및 Kafka broker 성공 응답 Mock
         when(kafkaTemplate.send(
                 "factory.manufacturing.raw",
-                "CAR-001",
-                "{\"eventId\":\"EVT-001\"}"
+                "10",
+                message
         )).thenReturn(CompletableFuture.completedFuture(sendResult));
         when(sendResult.getRecordMetadata()).thenReturn(recordMetadata);
         when(recordMetadata.topic()).thenReturn("factory.manufacturing.raw");
@@ -129,13 +136,15 @@ class ManufacturingKafkaProducerTest {
         when(recordMetadata.offset()).thenReturn(10L);
 
         // When: raw 토픽 발행
-        KafkaPublishResult result = producer.sendRaw(event).join();
+        LocalDateTime eventTime = LocalDateTime.now();
+        KafkaPublishResult result = producer.sendRaw(event, eventTime).join();
+        LocalDateTime afterSend = LocalDateTime.now();
 
         // Then: raw 토픽, equipmentCode key, 직렬화 payload 전송 검증
         verify(kafkaTemplate).send(
                 "factory.manufacturing.raw",
-                "CAR-001",
-                "{\"eventId\":\"EVT-001\"}"
+                "10",
+                message
         );
 
         // Then: 현재 Pod의 발행 추적 이력 기록 검증
@@ -143,16 +152,24 @@ class ManufacturingKafkaProducerTest {
                 "factory.manufacturing.raw",
                 3,
                 10L,
-                "CAR-001",
+                "10",
                 "EVT-001",
-                "{\"eventId\":\"EVT-001\"}"
+                message
         );
 
         // Then: broker RecordMetadata 기반 API 응답 검증
         assertThat(result.topic()).isEqualTo("factory.manufacturing.raw");
         assertThat(result.partition()).isEqualTo(3);
         assertThat(result.offset()).isEqualTo(10L);
-        assertThat(result.messageKey()).isEqualTo("CAR-001");
+        assertThat(result.messageKey()).isEqualTo("10");
+
+        ArgumentCaptor<ManufacturingRawEvent> payloadCaptor =
+                ArgumentCaptor.forClass(ManufacturingRawEvent.class);
+        verify(objectMapper).writeValueAsString(payloadCaptor.capture());
+        ManufacturingRawEvent publishedPayload = payloadCaptor.getValue();
+        assertThat(publishedPayload.eventTime()).isNotNull();
+        assertThat(publishedPayload.eventTime()).isBetween(beforeSend, afterSend);
+        assertThat(publishedPayload.eventJson()).isEqualTo(payload.eventJson());
     }
 
     @Test
@@ -168,16 +185,18 @@ class ManufacturingKafkaProducerTest {
                 "HYDRAULIC_PRESS", "RUNNING", "PROCESS_STATUS", Map.of()
         );
         StoredManufacturingEvent event = stored(payload, "{\"eventId\":\"EVT-001\"}", "CAR-001");
+        String message = "{\"processCode\":\"PRESS\",\"eventJson\":{\"eventId\":\"EVT-001\"}}";
+        when(objectMapper.writeValueAsString(any(ManufacturingRawEvent.class))).thenReturn(message);
 
         // Given: broker 연결 실패 CompletableFuture Mock
         when(kafkaTemplate.send(
                 "factory.manufacturing.raw",
-                "CAR-001",
-                "{\"eventId\":\"EVT-001\"}"
+                "10",
+                message
         )).thenReturn(CompletableFuture.failedFuture(new RuntimeException("broker unavailable")));
 
         // When & Then: 비동기 실패 원인의 Kafka ErrorCode 변환 검증
-        assertThatThrownBy(() -> producer.sendRaw(event).join())
+        assertThatThrownBy(() -> producer.sendRaw(event, LocalDateTime.now()).join())
                 .isInstanceOf(CompletionException.class)
                 .hasCauseInstanceOf(KafkaException.class)
                 .satisfies(exception -> {

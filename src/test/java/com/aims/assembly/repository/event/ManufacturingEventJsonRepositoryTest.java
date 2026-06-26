@@ -1,6 +1,7 @@
 package com.aims.assembly.repository.event;
 
 import com.aims.assembly.domain.enums.DispatchStatus;
+import com.aims.assembly.domain.enums.ProcessCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -155,6 +156,16 @@ class ManufacturingEventJsonRepositoryTest {
 
         assertThat(repository.findById(1).orElseThrow().payload().eventTime()).isNull();
         assertThat(repository.findReadyForUpdate(LocalDateTime.now(), 1_000, 3)).isEmpty();
+    }
+
+    @Test
+    void mapsProcessCodeFromColumnWithoutAddingItToEventJson() {
+        insert(1, LocalDateTime.now(), "READY", false);
+
+        var payload = repository.findById(1).orElseThrow().payload();
+
+        assertThat(payload.processCode()).isEqualTo(ProcessCode.PRESS);
+        assertThat(payload.eventJson()).doesNotContainKeys("processCode", "process_code");
     }
 
     private void insert(long id, LocalDateTime time, String status, boolean sent) {

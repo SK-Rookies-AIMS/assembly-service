@@ -23,6 +23,12 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 제조 Kafka 파이프라인 토픽별 메시지 소비.
  * Consumer Group별 독립 처리와 후속 토픽 발행 담당.
+ *
+ * <p>alert 발행 경로:
+ * <ul>
+ *   <li>Case A: analysis topic → consumeAnalysisForAlert → riskScore WARNING/CRITICAL → alert 발행</li>
+ *   <li>Case B: raw topic → consumeRaw → 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 직접 감지 → alert 발행</li>
+ * </ul>
  */
 public class ManufacturingKafkaConsumer {
 
@@ -62,6 +68,16 @@ public class ManufacturingKafkaConsumer {
         // processCode 기반 PRESS/BODY/PAINT/ASSEMBLY 서비스 선택
         // 공정 분석 결과 생성 후 analysis 토픽 발행
         try {
+            // Case B: 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 감지 시 raw 단계에서 즉시 alert 발행
+            // 분석 결과(processRisk)와 무관하게 독립적으로 발행된다
+            if (analyzer.isEquipmentAbnormal(event)) {
+                log.warn(
+                        "Equipment abnormal status detected in raw event: eventId={}, equipment={}",
+                        event.eventId(), event.equipmentCode()
+                );
+                producer.sendAlert(analyzer.toEquipmentStatusAlert(event)).join();
+            }
+
             ManufacturingAnalysisEvent analysis = processRouter.route(event);
             analysisResultService.save(event, analysis);
             producer.sendAnalysis(analysis).join();
@@ -133,7 +149,7 @@ public class ManufacturingKafkaConsumer {
         // Alert Analysis Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "alert-analysis-consumer-group", analysis.eventId());
 
-        // 위험 기준 충족 시에만 alert 이벤트 생성 및 발행
+        // Case A: processRisk 기반 riskScore가 WARNING/CRITICAL이면 alert 발행
         if (analyzer.requiresAlert(analysis)) {
             producer.sendAlert(analyzer.toAlertEvent(analysis)).join();
         }
@@ -179,7 +195,8 @@ public class ManufacturingKafkaConsumer {
         // Alert Notification Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "alert-notification-consumer-group", event.eventId());
         log.warn(
-                "Manufacturing alert received: equipment={}, level={}, score={}, partition={}",
+                "Manufacturing alert received: type={}, equipment={}, level={}, score={}, partition={}",
+                event.alertType(),
                 event.equipmentCode(),
                 event.riskLevel(),
                 event.riskScore(),

@@ -4,6 +4,7 @@ import com.aims.assembly.kafka.model.EquipmentStatusEvent;
 import com.aims.assembly.kafka.model.KafkaPublishResult;
 import com.aims.assembly.kafka.model.ManufacturingAlertEvent;
 import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
+import com.aims.assembly.kafka.model.ManufacturingRawEvent;
 import com.aims.assembly.common.status.KafkaErrorStatus;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.properties.KafkaCustomProperties;
@@ -14,6 +15,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
 
 @Service
@@ -30,20 +32,43 @@ public class ManufacturingKafkaProducer {
     private final KafkaCustomProperties kafkaProperties;
     private final KafkaMessageTraceStore traceStore;
 
-    public CompletableFuture<KafkaPublishResult> sendRaw(StoredManufacturingEvent event) {
-        // Persisted event_json is the complete immutable raw payload.
+    public CompletableFuture<KafkaPublishResult> sendRaw(
+            StoredManufacturingEvent event,
+            LocalDateTime eventTime
+    ) {
+        ManufacturingRawEvent payload = withPublishedEventTime(event.payload(), eventTime);
+        // Route metadata comes from table columns; eventJson remains the immutable JSON column.
         return send(
                 // 원천 제조 이벤트 토픽 선택
                 kafkaProperties.getTopics().getRaw().getName(),
-                event.carId(),
+                requiredLongKey(payload.carMasterId(), "carMasterId", payload.eventId()),
                 // 전체 파이프라인 추적용 eventId
+                payload.eventId(),
+                payload
+        );
+    }
+
+
+    private ManufacturingRawEvent withPublishedEventTime(
+            ManufacturingRawEvent event,
+            LocalDateTime eventTime
+    ) {
+        return new ManufacturingRawEvent(
+                event.id(),
                 event.eventId(),
-                event.rawJson()
+                eventTime,
+                event.carMasterId(),
+                event.equipmentId(),
+                event.processCode(),
+                event.equipmentCode(),
+                event.equipmentType(),
+                event.equipmentStatus(),
+                event.eventType(),
+                event.eventJson()
         );
     }
 
     public CompletableFuture<KafkaPublishResult> sendAnalysis(ManufacturingAnalysisEvent event) {
-        // 불량 전이 분석은 차량 식별자를 우선 사용하고 누락 시 안전한 대체 key를 선택
         String key = analysisMessageKey(event);
 
         // 분석 결과 토픽 발행
@@ -56,48 +81,22 @@ public class ManufacturingKafkaProducer {
     }
 
     String analysisMessageKey(ManufacturingAnalysisEvent event) {
-        // All manufacturing analysis results use the vehicle key.
-        if (hasText(event.carId())) {
-            return event.carId();
-        }
-
-        // carId가 없으면 SampleDB 차량 PK를 안정적인 대체 key로 사용
-        if (event.carMasterId() != null && event.carMasterId() > 0) {
-            String fallbackKey = "CAR_MASTER-" + event.carMasterId();
-            log.warn(
-                    "불량 전이 분석의 carId가 없어 carMasterId를 Kafka key로 사용합니다. "
-                            + "eventId={}, fallbackKey={}",
-                    event.eventId(),
-                    fallbackKey
-            );
-            return fallbackKey;
-        }
-
-        // 차량 식별자가 모두 없으면 key 없는 메시지가 되지 않도록 equipmentCode 사용
-        log.warn(
-                "불량 전이 분석의 차량 식별자가 없어 equipmentCode를 Kafka key로 사용합니다. "
-                        + "eventId={}, fallbackKey={}",
-                event.eventId(),
-                event.equipmentCode()
-        );
-        return event.equipmentCode();
+        return requiredLongKey(event.carMasterId(), "carMasterId", event.eventId());
     }
 
     public CompletableFuture<KafkaPublishResult> sendAlert(ManufacturingAlertEvent event) {
-        // 동일 설비 알림 순서 보장을 위한 equipmentCode key 사용
         return send(
                 kafkaProperties.getTopics().getAlert().getName(),
-                event.equipmentCode(),
+                requiredTextKey(event.alertId(), "alertId", event.eventId()),
                 event.eventId(),
                 event
         );
     }
 
     public CompletableFuture<KafkaPublishResult> sendEquipment(EquipmentStatusEvent event) {
-        // 동일 설비 상태 변경 순서 보장을 위한 equipmentCode key 사용
         return send(
                 kafkaProperties.getTopics().getEquipment().getName(),
-                event.equipmentCode(),
+                requiredLongKey(event.equipmentId(), "equipmentId", event.eventId()),
                 event.eventId(),
                 event
         );
@@ -172,7 +171,23 @@ public class ManufacturingKafkaProducer {
         return exception.getCause() == null ? exception : exception.getCause();
     }
 
-    private boolean hasText(String value) {
-        return value != null && !value.isBlank();
+    private String requiredLongKey(Long value, String fieldName, String eventId) {
+        if (value == null) {
+            throw new IllegalArgumentException(
+                    "Kafka message key field must not be null. field="
+                            + fieldName + ", eventId=" + eventId
+            );
+        }
+        return String.valueOf(value);
+    }
+
+    private String requiredTextKey(String value, String fieldName, String eventId) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Kafka message key field must not be blank. field="
+                            + fieldName + ", eventId=" + eventId
+            );
+        }
+        return value;
     }
 }

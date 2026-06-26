@@ -41,11 +41,11 @@ class ManufacturingRawEventServiceTest {
         StoredManufacturingEvent event = event();
         KafkaPublishResult result = new KafkaPublishResult("factory.manufacturing.raw", 0, 1, "CAR-1", "EVT-1");
         when(repository.findReadyByIdForUpdate(7)).thenReturn(Optional.of(event));
-        when(producer.sendRaw(event)).thenReturn(CompletableFuture.completedFuture(result));
-        when(repository.markSent(7)).thenReturn(1);
+        when(producer.sendRaw(eq(event), any(LocalDateTime.class))).thenReturn(CompletableFuture.completedFuture(result));
+        when(repository.markSent(eq(7L), any(LocalDateTime.class))).thenReturn(1);
 
         assertThat(service.sendById(7).join()).isSameAs(result);
-        verify(repository).markSent(7);
+        verify(repository).markSent(eq(7L), any(LocalDateTime.class));
         verify(repository, never()).markPublishFailed(anyLong(), anyString());
     }
 
@@ -53,11 +53,11 @@ class ManufacturingRawEventServiceTest {
     void recordsRetryAndErrorAfterBrokerFailure() {
         StoredManufacturingEvent event = event();
         when(repository.findReadyByIdForUpdate(7)).thenReturn(Optional.of(event));
-        when(producer.sendRaw(event)).thenReturn(CompletableFuture.failedFuture(new RuntimeException("broker down")));
+        when(producer.sendRaw(eq(event), any(LocalDateTime.class))).thenReturn(CompletableFuture.failedFuture(new RuntimeException("broker down")));
 
         assertThatThrownBy(() -> service.sendById(7).join()).hasRootCauseMessage("broker down");
         verify(repository).markPublishFailed(eq(7L), contains("broker down"));
-        verify(repository, never()).markSent(anyLong());
+        verify(repository, never()).markSent(anyLong(), any(LocalDateTime.class));
     }
 
     @Test
