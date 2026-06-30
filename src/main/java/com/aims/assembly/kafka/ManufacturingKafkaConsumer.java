@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Component
@@ -35,6 +36,10 @@ import java.util.List;
  * </ul>
  */
 public class ManufacturingKafkaConsumer {
+
+    private static final Pattern OFFSET_DATE_TIME_PATTERN = Pattern.compile(
+            "(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)(?:Z|[+-]\\d{2}:\\d{2})"
+    );
 
     private final ObjectMapper objectMapper;
     private final ManufacturingEventAnalyzer analyzer;
@@ -192,7 +197,7 @@ public class ManufacturingKafkaConsumer {
         equipmentStateService.applyStatusEvent(event);
         if ("RECOVERED".equals(event.changeType())) {
             eventRepository.restoreBlockedEvents(event.equipmentId(), event.equipmentCode());
-        } else if ("FAULT".equals(event.changeType())) {
+        } else if ("FAULT".equals(event.changeType()) && isBlockingEquipmentStatus(event.operationStatus())) {
             eventRepository.blockReadyEvents(event.equipmentId(), event.equipmentCode());
         }
         log.info(
@@ -202,6 +207,11 @@ public class ManufacturingKafkaConsumer {
                 event.riskLevel(),
                 record.partition()
         );
+    }
+
+    private boolean isBlockingEquipmentStatus(String operationStatus) {
+        return "FAULT".equalsIgnoreCase(operationStatus)
+                || "STOPPED".equalsIgnoreCase(operationStatus);
     }
 
     @KafkaListener(
@@ -232,6 +242,15 @@ public class ManufacturingKafkaConsumer {
             // Kafka 문자열 payload를 Listener별 메시지 타입으로 변환
             return objectMapper.readValue(record.value(), messageType);
         } catch (RuntimeException exception) {
+            String normalizedPayload = normalizeOffsetDateTimes(record.value());
+            if (!normalizedPayload.equals(record.value())) {
+                try {
+                    return objectMapper.readValue(normalizedPayload, messageType);
+                } catch (RuntimeException normalizedException) {
+                    normalizedException.addSuppressed(exception);
+                    exception = normalizedException;
+                }
+            }
             throw new KafkaException(
                     KafkaErrorStatus.MESSAGE_DESERIALIZATION_FAILED,
                     "Kafka 메시지 역직렬화에 실패했습니다. topic=" + record.topic()
@@ -240,6 +259,13 @@ public class ManufacturingKafkaConsumer {
                     exception
             );
         }
+    }
+
+    static String normalizeOffsetDateTimes(String payload) {
+        if (payload == null || payload.isBlank()) {
+            return payload;
+        }
+        return OFFSET_DATE_TIME_PATTERN.matcher(payload).replaceAll("$1");
     }
 
     static boolean isAbnormalAnalysis(ManufacturingAnalysisEvent analysis) {

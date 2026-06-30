@@ -44,7 +44,7 @@ public class Equipment {
     private ProcessCode processCode;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "current_status")
+    @Column(name = "current_status", columnDefinition = "ENUM('RUNNING','WARNING','STOPPED','FAULT')")
     private EquipmentOperationStatus currentStatus;
 
     @Column(name = "last_fault_time")

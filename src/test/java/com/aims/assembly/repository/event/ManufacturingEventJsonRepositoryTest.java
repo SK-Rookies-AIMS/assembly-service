@@ -45,7 +45,7 @@ class ManufacturingEventJsonRepositoryTest {
     }
 
     @Test
-    void selectsOnlyDueReadyUnsentRowsInEventTimeAndIdOrder() {
+    void selectsReadyUnsentRowsInIdOrderWithoutEventTimeGate() {
         LocalDateTime now = LocalDateTime.of(2026, 6, 22, 10, 0);
         insert(3, now.minusMinutes(1), "READY", false);
         insert(2, now.minusMinutes(1), "READY", false);
@@ -56,7 +56,7 @@ class ManufacturingEventJsonRepositoryTest {
         var rows = repository.findReadyForUpdate(now, 1_000, 3);
 
         assertThat(rows).extracting(ManufacturingEventJsonRepository.StoredManufacturingEvent::id)
-                .containsExactly(2L, 3L);
+                .containsExactly(1L, 2L, 3L);
     }
 
     @Test
@@ -115,8 +115,8 @@ class ManufacturingEventJsonRepositoryTest {
     @Test
     void activatesFirstPendingThenWaitsForPreviousAnalysisBeforeNextEvent() {
         LocalDateTime now = LocalDateTime.now();
-        insert(1, now.minusMinutes(2), "PENDING", false);
-        insert(2, now.minusMinutes(1), "PENDING", false);
+        insert(1, now.minusMinutes(2), "PENDING", false, "PRESS");
+        insert(2, now.minusMinutes(1), "PENDING", false, "BODY");
 
         assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
         assertThat(status(1)).isEqualTo(DispatchStatus.READY.name());
@@ -130,14 +130,24 @@ class ManufacturingEventJsonRepositoryTest {
     @Test
     void blocksNextPendingEventWhenPreviousAnalysisWasAbnormal() {
         LocalDateTime now = LocalDateTime.now();
-        insert(1, now.minusMinutes(2), "PENDING", false);
-        insert(2, now.minusMinutes(1), "PENDING", false);
+        insert(1, now.minusMinutes(2), "PENDING", false, "PRESS");
+        insert(2, now.minusMinutes(1), "PENDING", false, "BODY");
 
         assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
         repository.markAnalysisCompleted("EVT-1", true);
 
         assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
         assertThat(status(2)).isEqualTo(DispatchStatus.BLOCKED.name());
+    }
+
+    @Test
+    void pressPendingIgnoresPreviousUnanalyzedOrAbnormalRows() {
+        LocalDateTime now = LocalDateTime.now();
+        insert(1, now.minusMinutes(2), 50L, "BODY", "SENT", "ABNORMAL", true);
+        insert(2, now.minusMinutes(1), 50L, "PRESS", "PENDING", "NOT_ANALYZED", false);
+
+        assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
+        assertThat(status(2)).isEqualTo(DispatchStatus.READY.name());
     }
 
     @Test
@@ -314,11 +324,13 @@ class ManufacturingEventJsonRepositoryTest {
     }
 
     @Test
-    void readsNullEventTimeAndExcludesItFromSchedulerQueries() {
+    void readsNullEventTimeAndIncludesItInSchedulerQueries() {
         insert(1, null, "READY", false);
 
         assertThat(repository.findById(1).orElseThrow().payload().eventTime()).isNull();
-        assertThat(repository.findReadyForUpdate(LocalDateTime.now(), 1_000, 3)).isEmpty();
+        assertThat(repository.findReadyForUpdate(LocalDateTime.now(), 1_000, 3))
+                .extracting(ManufacturingEventJsonRepository.StoredManufacturingEvent::id)
+                .containsExactly(1L);
     }
 
     @Test

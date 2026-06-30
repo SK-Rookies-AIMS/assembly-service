@@ -71,9 +71,9 @@ public class ManufacturingAnalysisResultService {
                         .processCode(raw.processCode())
                         .eventTime(eventTime)
                         .isAbnormal(result.isAbnormal())
-                        .abnormalType(abnormalType(result, analysis.riskScores().overallRiskScore()))
+                        .abnormalType(abnormalType(result, overallRiskScore(analysis)))
                         .severity(severity(analysis.riskLevel()))
-                        .riskScore(analysis.riskScores().overallRiskScore())
+                        .riskScore(overallRiskScore(analysis))
                         .analysisMessage(analysis.reason() == null ? null : analysis.reason().mainReason())
                         .analyzedAt(analysis.analyzedAt())
                         .build()
@@ -166,6 +166,13 @@ public class ManufacturingAnalysisResultService {
         if (result.isEquipmentFault()) return "EQUIPMENT";
         if (result.isSequenceError() || riskScore >= 60) return "PROCESS";
         return null;
+    }
+
+    private double overallRiskScore(ManufacturingAnalysisEvent analysis) {
+        if (analysis.riskScores() == null || analysis.riskScores().overallRiskScore() == null) {
+            return 0.0;
+        }
+        return analysis.riskScores().overallRiskScore();
     }
 
     private Severity severity(String riskLevel) {
