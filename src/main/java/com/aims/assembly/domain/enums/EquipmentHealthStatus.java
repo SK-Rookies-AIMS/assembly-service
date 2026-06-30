@@ -7,7 +7,8 @@ import lombok.*;
 public enum EquipmentHealthStatus {
 
     NORMAL("정상"),
-    ABNORMAL("이상");
+    WARNING("경고"),
+    CRITICAL("위험");
 
     private final String description;
 }

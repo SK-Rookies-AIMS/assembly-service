@@ -65,11 +65,11 @@ class ManufacturingEventJsonRepositoryTest {
         insert(1, now, "READY", false);
         insert(2, now, "PENDING", false);
 
-        assertThat(repository.blockReadyEvents(10, "EQ-1")).isEqualTo(1);
+        assertThat(repository.blockReadyEvents(10L, "EQ-1")).isEqualTo(1);
         assertThat(status(1)).isEqualTo(DispatchStatus.BLOCKED.name());
         assertThat(status(2)).isEqualTo(DispatchStatus.PENDING.name());
 
-        assertThat(repository.restoreBlockedEvents(10, "EQ-1")).isEqualTo(1);
+        assertThat(repository.restoreBlockedEvents(10L, "EQ-1")).isEqualTo(1);
         assertThat(status(1)).isEqualTo(DispatchStatus.READY.name());
         assertThat(status(2)).isEqualTo(DispatchStatus.PENDING.name());
     }
@@ -128,6 +128,147 @@ class ManufacturingEventJsonRepositoryTest {
     }
 
     @Test
+    void blocksNextPendingEventWhenPreviousAnalysisWasAbnormal() {
+        LocalDateTime now = LocalDateTime.now();
+        insert(1, now.minusMinutes(2), "PENDING", false);
+        insert(2, now.minusMinutes(1), "PENDING", false);
+
+        assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
+        repository.markAnalysisCompleted("EVT-1", true);
+
+        assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
+        assertThat(status(2)).isEqualTo(DispatchStatus.BLOCKED.name());
+    }
+
+    @Test
+    void pressNormalCompletionReleasesBodyOnly() {
+        insertManufacturingFlow();
+
+        assertThat(repository.releaseNextProcess(1L, ProcessCode.BODY.name())).isEqualTo(1);
+
+        assertThat(status(1)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(status(2)).isEqualTo(DispatchStatus.READY.name());
+        assertThat(status(3)).isEqualTo(DispatchStatus.PENDING.name());
+        assertThat(status(4)).isEqualTo(DispatchStatus.PENDING.name());
+    }
+
+    @Test
+    void releaseNextProcessUsesCarMasterIdNextProcessPendingAndUnsentOnly() {
+        LocalDateTime now = LocalDateTime.now();
+        insert(37, now.minusMinutes(3), 33L, "PRESS", "SENT", "NORMAL", true);
+        insert(38, now.minusMinutes(2), 33L, "BODY", "PENDING", "NOT_ANALYZED", false);
+        insert(39, now.minusMinutes(1), 33L, "PAINT", "PENDING", "NOT_ANALYZED", false);
+        insert(40, now, 33L, "ASSEMBLY", "PENDING", "NOT_ANALYZED", false);
+
+        int updatedRows = repository.releaseNextProcess(33L, ProcessCode.BODY.name());
+
+        assertThat(updatedRows).isEqualTo(1);
+        assertThat(status(37)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(analysisStatus(37)).isEqualTo("NORMAL");
+        assertThat(status(38)).isEqualTo(DispatchStatus.READY.name());
+        assertThat(analysisStatus(38)).isEqualTo("NOT_ANALYZED");
+        assertThat(status(39)).isEqualTo(DispatchStatus.PENDING.name());
+        assertThat(status(40)).isEqualTo(DispatchStatus.PENDING.name());
+    }
+
+    @Test
+    void releaseNextProcessMatchesManualSqlForCarMasterElevenBody() {
+        LocalDateTime now = LocalDateTime.now();
+        insert(41, now.minusMinutes(1), 11L, "PRESS", "SENT", "NORMAL", true);
+        insert(42, now, 11L, "BODY", "PENDING", "NOT_ANALYZED", false);
+
+        int updatedRows = repository.releaseNextProcess(11L, "BODY");
+
+        assertThat(updatedRows).isEqualTo(1);
+        assertThat(status(41)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(analysisStatus(41)).isEqualTo("NORMAL");
+        assertThat(status(42)).isEqualTo(DispatchStatus.READY.name());
+        assertThat(analysisStatus(42)).isEqualTo("NOT_ANALYZED");
+    }
+
+    @Test
+    void bodyNormalCompletionReleasesPaintOnly() {
+        insertManufacturingFlow();
+        jdbc.update("UPDATE manufacturing_event_json SET dispatch_status='SENT' WHERE id=2");
+
+        assertThat(repository.releaseNextProcess(1L, ProcessCode.PAINT.name())).isEqualTo(1);
+
+        assertThat(status(2)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(status(3)).isEqualTo(DispatchStatus.READY.name());
+        assertThat(status(4)).isEqualTo(DispatchStatus.PENDING.name());
+    }
+
+    @Test
+    void paintNormalCompletionReleasesAssembly() {
+        insertManufacturingFlow();
+        jdbc.update("UPDATE manufacturing_event_json SET dispatch_status='SENT' WHERE id=3");
+
+        assertThat(repository.releaseNextProcess(1L, ProcessCode.ASSEMBLY.name())).isEqualTo(1);
+
+        assertThat(status(3)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(status(4)).isEqualTo(DispatchStatus.READY.name());
+    }
+
+    @Test
+    void pressAbnormalCompletionBlocksFollowingProcesses() {
+        insertManufacturingFlow();
+
+        assertThat(repository.blockFollowingProcesses(
+                1L,
+                java.util.List.of(ProcessCode.BODY, ProcessCode.PAINT, ProcessCode.ASSEMBLY)
+        )).isEqualTo(3);
+
+        assertThat(status(1)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(status(2)).isEqualTo(DispatchStatus.BLOCKED.name());
+        assertThat(status(3)).isEqualTo(DispatchStatus.BLOCKED.name());
+        assertThat(status(4)).isEqualTo(DispatchStatus.BLOCKED.name());
+    }
+
+    @Test
+    void bodyAbnormalCompletionBlocksPaintAndAssembly() {
+        insertManufacturingFlow();
+        jdbc.update("UPDATE manufacturing_event_json SET dispatch_status='SENT' WHERE id=2");
+
+        assertThat(repository.blockFollowingProcesses(
+                1L,
+                java.util.List.of(ProcessCode.PAINT, ProcessCode.ASSEMBLY)
+        )).isEqualTo(2);
+
+        assertThat(status(2)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(status(3)).isEqualTo(DispatchStatus.BLOCKED.name());
+        assertThat(status(4)).isEqualTo(DispatchStatus.BLOCKED.name());
+    }
+
+    @Test
+    void paintAbnormalCompletionBlocksAssembly() {
+        insertManufacturingFlow();
+        jdbc.update("UPDATE manufacturing_event_json SET dispatch_status='SENT' WHERE id=3");
+
+        assertThat(repository.blockFollowingProcesses(
+                1L,
+                java.util.List.of(ProcessCode.ASSEMBLY)
+        )).isEqualTo(1);
+
+        assertThat(status(3)).isEqualTo(DispatchStatus.SENT.name());
+        assertThat(status(4)).isEqualTo(DispatchStatus.BLOCKED.name());
+    }
+
+    @Test
+    void bodyPendingEventRequiresPreviousPressNormalCompletion() {
+        LocalDateTime now = LocalDateTime.now();
+        insert(1, now.minusMinutes(2), "PENDING", false, "PRESS");
+        insert(2, now.minusMinutes(1), "PENDING", false, "BODY");
+
+        assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
+        assertThat(status(1)).isEqualTo(DispatchStatus.READY.name());
+        assertThat(status(2)).isEqualTo(DispatchStatus.PENDING.name());
+
+        repository.markAnalysisCompleted("EVT-1", false);
+        assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
+        assertThat(status(2)).isEqualTo(DispatchStatus.READY.name());
+    }
+
+    @Test
     void mapsSuccessfulNormalAndAbnormalAnalysisAndKeepsFailureNotAnalyzed() {
         LocalDateTime now = LocalDateTime.now();
         insert(1, now, "READY", false);
@@ -141,9 +282,31 @@ class ManufacturingEventJsonRepositoryTest {
     }
 
     @Test
+    void normalAnalysisUpdatesSourceEventAnalysisStatusByEventId() {
+        LocalDateTime now = LocalDateTime.now();
+        insert(45, now, 11L, "PRESS", "SENT", "NOT_ANALYZED", true);
+
+        int updatedRows = repository.markAnalysisCompleted("EVT-45", false);
+
+        assertThat(updatedRows).isEqualTo(1);
+        assertThat(analysisStatus(45)).isEqualTo("NORMAL");
+        assertThat(status(45)).isEqualTo(DispatchStatus.SENT.name());
+    }
+
+    @Test
     void activatesPendingEventAsBlockedWhenTargetEquipmentIsFaulted() {
         LocalDateTime now = LocalDateTime.now();
-        jdbc.update("UPDATE equipment SET health_status='ABNORMAL', current_status='FAULT' WHERE id=10");
+        jdbc.update("UPDATE equipment SET health_status='CRITICAL', current_status='FAULT' WHERE id=10");
+        insert(1, now.minusSeconds(1), "PENDING", false);
+
+        assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
+        assertThat(status(1)).isEqualTo(DispatchStatus.BLOCKED.name());
+    }
+
+    @Test
+    void activatesPendingEventAsBlockedWhenTargetEquipmentHealthIsWarning() {
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("UPDATE equipment SET health_status='WARNING', current_status='WARNING' WHERE id=10");
         insert(1, now.minusSeconds(1), "PENDING", false);
 
         assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
@@ -169,11 +332,36 @@ class ManufacturingEventJsonRepositoryTest {
     }
 
     private void insert(long id, LocalDateTime time, String status, boolean sent) {
+        insert(id, time, status, sent, "PRESS");
+    }
+
+    private void insert(long id, LocalDateTime time, String status, boolean sent, String processCode) {
+        insert(id, time, 1L, processCode, status, "NOT_ANALYZED", sent);
+    }
+
+    private void insert(
+            long id,
+            LocalDateTime time,
+            long carMasterId,
+            String processCode,
+            String dispatchStatus,
+            String analysisStatus,
+            boolean sent
+    ) {
         jdbc.update("""
                 INSERT INTO manufacturing_event_json VALUES
-                (?, ?, ?, 1, 10, 'PRESS', '{"event":{"carId":"CAR-1"}}',
-                 ?, 'NOT_ANALYZED', ?, 0, NULL, CURRENT_TIMESTAMP)
-                """, id, "EVT-" + id, time, status, sent);
+                (?, ?, ?, ?, 10, ?, '{"event":{"carId":"CAR-1"}}',
+                 ?, ?, ?, 0, NULL, CURRENT_TIMESTAMP)
+                """, id, "EVT-" + id, time, carMasterId, processCode,
+                dispatchStatus, analysisStatus, sent);
+    }
+
+    private void insertManufacturingFlow() {
+        LocalDateTime now = LocalDateTime.now();
+        insert(1, now.minusMinutes(3), "SENT", true, "PRESS");
+        insert(2, now.minusMinutes(2), "PENDING", false, "BODY");
+        insert(3, now.minusMinutes(1), "PENDING", false, "PAINT");
+        insert(4, now, "PENDING", false, "ASSEMBLY");
     }
 
     private String status(long id) {

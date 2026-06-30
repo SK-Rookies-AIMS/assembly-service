@@ -420,8 +420,10 @@ class ManufacturingEventAnalyzerTest {
             assertThat(analyzer.isEquipmentAbnormal(raw)).isTrue();
 
             ManufacturingAlertEvent alert = analyzer.toEquipmentStatusAlert(raw);
-            assertThat(alert.alertType()).isEqualTo("EQUIPMENT_STATUS");
+            assertThat(alert.alertType()).isEqualTo("EQUIPMENT_ABNORMAL");
             assertThat(alert.riskLevel()).isEqualTo("CRITICAL");
+            assertThat(analyzer.toEquipmentStatusEvent(raw).operationStatus()).isEqualTo("FAULT");
+            assertThat(analyzer.toEquipmentStatusEvent(raw).healthStatus()).isEqualTo("CRITICAL");
         }
 
         @Test
@@ -439,7 +441,7 @@ class ManufacturingEventAnalyzerTest {
 
             // alertId가 null/blank 이면 sendAlert()에서 requiredTextKey 예외 발생 → 검증
             assertThat(alert.alertId()).isNotBlank();
-            assertThat(alert.alertType()).isEqualTo("PROCESS_RISK");
+            assertThat(alert.alertType()).isEqualTo("MANUFACTURING_ABNORMAL");
         }
 
         @Test
@@ -449,7 +451,7 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingAlertEvent alert = analyzer.toEquipmentStatusAlert(raw);
 
             assertThat(alert.alertId()).isNotBlank();
-            assertThat(alert.alertType()).isEqualTo("EQUIPMENT_STATUS");
+            assertThat(alert.alertType()).isEqualTo("EQUIPMENT_ABNORMAL");
         }
 
         @Test

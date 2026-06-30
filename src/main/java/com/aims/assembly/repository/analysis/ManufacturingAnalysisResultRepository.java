@@ -16,4 +16,9 @@ public interface ManufacturingAnalysisResultRepository
     List<ManufacturingAnalysisResult> findAllByOrderByAnalyzedAtDescCreatedAtDesc(
             Pageable pageable
     );
+
+    List<ManufacturingAnalysisResult> findByCarMasterIdOrderByEventTimeAscAnalyzedAtAsc(
+            Long carMasterId
+    );
+
 }

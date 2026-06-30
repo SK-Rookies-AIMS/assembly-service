@@ -3,6 +3,7 @@ package com.aims.assembly.repository.event;
 import com.aims.assembly.common.status.KafkaErrorStatus;
 import com.aims.assembly.domain.enums.AnalysisStatus;
 import com.aims.assembly.domain.enums.DispatchStatus;
+import com.aims.assembly.domain.enums.EquipmentHealthStatus;
 import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
@@ -112,12 +113,21 @@ public class ManufacturingEventJsonRepository {
 
     /**
      * Activates only the earliest pending event per vehicle. A preceding event with
-     * NOT_ANALYZED blocks progression; completed NORMAL/ABNORMAL events do not.
+     * NOT_ANALYZED waits, and a preceding ABNORMAL event blocks progression.
      */
     public int prepareDispatchablePendingEvents(LocalDateTime virtualNow, int limit) {
         List<PendingActivation> candidates = jdbcTemplate.query(
                 """
-                        SELECT e.id, q.health_status, q.current_status
+                        SELECT e.id, e.car_master_id, e.process_code,
+                               q.health_status, q.current_status,
+                               EXISTS (
+                                   SELECT 1 FROM manufacturing_event_json previous_abnormal
+                                   WHERE previous_abnormal.car_master_id = e.car_master_id
+                                     AND (previous_abnormal.event_time < e.event_time
+                                       OR (previous_abnormal.event_time = e.event_time
+                                           AND previous_abnormal.id < e.id))
+                                     AND previous_abnormal.analysis_status = 'ABNORMAL'
+                               ) AS has_previous_abnormal
                         FROM manufacturing_event_json e
                         LEFT JOIN equipment q ON q.id = e.equipment_id
                         WHERE e.dispatch_status = 'PENDING'
@@ -135,15 +145,21 @@ public class ManufacturingEventJsonRepository {
                         FOR UPDATE SKIP LOCKED
                         """,
                 (rs, rowNum) -> new PendingActivation(
-                        rs.getLong("id"), rs.getString("health_status"),
-                        rs.getString("current_status")),
+                        rs.getLong("id"),
+                        rs.getLong("car_master_id"),
+                        ProcessCode.valueOf(rs.getString("process_code")),
+                        rs.getString("health_status"),
+                        rs.getString("current_status"),
+                        rs.getBoolean("has_previous_abnormal")),
                 virtualNow, Math.min(Math.max(limit, 1), 1_000)
         );
         int updated = 0;
         for (PendingActivation candidate : candidates) {
-            boolean faulted = "ABNORMAL".equals(candidate.healthStatus())
+            boolean faulted = isUnavailableHealthStatus(candidate.healthStatus())
                     || "FAULT".equals(candidate.operationStatus())
-                    || "STOPPED".equals(candidate.operationStatus());
+                    || "STOPPED".equals(candidate.operationStatus())
+                    || candidate.hasPreviousAbnormal()
+                    || !hasRequiredPreviousProcessCompleted(candidate);
             updated += jdbcTemplate.update(
                     """
                             UPDATE manufacturing_event_json
@@ -156,6 +172,36 @@ public class ManufacturingEventJsonRepository {
             );
         }
         return updated;
+    }
+
+    private boolean isUnavailableHealthStatus(String healthStatus) {
+        return EquipmentHealthStatus.WARNING.name().equals(healthStatus)
+                || EquipmentHealthStatus.CRITICAL.name().equals(healthStatus);
+    }
+
+    private boolean hasRequiredPreviousProcessCompleted(PendingActivation candidate) {
+        ProcessCode requiredPrevious = switch (candidate.processCode()) {
+            case PRESS -> null;
+            case BODY -> ProcessCode.PRESS;
+            case PAINT -> ProcessCode.BODY;
+            case ASSEMBLY -> ProcessCode.PAINT;
+        };
+        if (requiredPrevious == null) {
+            return true;
+        }
+        Integer count = jdbcTemplate.queryForObject(
+                """
+                        SELECT COUNT(1)
+                        FROM manufacturing_event_json
+                        WHERE car_master_id = ?
+                          AND process_code = ?
+                          AND analysis_status = 'NORMAL'
+                        """,
+                Integer.class,
+                candidate.carMasterId(),
+                requiredPrevious.name()
+        );
+        return count != null && count > 0;
     }
 
     public int markSent(long id, LocalDateTime eventTime) {
@@ -204,7 +250,65 @@ public class ManufacturingEventJsonRepository {
         );
     }
 
-    public int blockReadyEvents(long equipmentId, String equipmentCode) {
+    public int releaseNextProcess(Long carMasterId, String nextProcessCode) {
+        if (carMasterId == null || nextProcessCode == null) {
+            return 0;
+        }
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json
+                        SET dispatch_status = 'READY', updated_at = CURRENT_TIMESTAMP
+                        WHERE car_master_id = ?
+                          AND process_code = ?
+                          AND dispatch_status = 'PENDING'
+                        """,
+                carMasterId,
+                nextProcessCode
+        );
+    }
+
+    public int countPendingNextProcessCandidates(Long carMasterId, String nextProcessCode) {
+        if (carMasterId == null || nextProcessCode == null) {
+            return 0;
+        }
+        Integer count = jdbcTemplate.queryForObject(
+                """
+                        SELECT COUNT(1)
+                        FROM manufacturing_event_json
+                        WHERE car_master_id = ?
+                          AND process_code = ?
+                          AND dispatch_status = 'PENDING'
+                        """,
+                Integer.class,
+                carMasterId,
+                nextProcessCode
+        );
+        return count == null ? 0 : count;
+    }
+
+    public int blockFollowingProcesses(Long carMasterId, List<ProcessCode> followingProcesses) {
+        if (carMasterId == null || followingProcesses == null || followingProcesses.isEmpty()) {
+            return 0;
+        }
+        String placeholders = String.join(",", followingProcesses.stream().map(process -> "?").toList());
+        Object[] params = new Object[followingProcesses.size() + 1];
+        params[0] = carMasterId;
+        for (int i = 0; i < followingProcesses.size(); i++) {
+            params[i + 1] = followingProcesses.get(i).name();
+        }
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json
+                        SET dispatch_status = 'BLOCKED', updated_at = CURRENT_TIMESTAMP
+                        WHERE car_master_id = ?
+                          AND process_code IN (%s)
+                          AND dispatch_status IN ('PENDING', 'READY')
+                        """.formatted(placeholders),
+                params
+        );
+    }
+
+    public int blockReadyEvents(Long equipmentId, String equipmentCode) {
         return jdbcTemplate.update(
                 """
                         UPDATE manufacturing_event_json
@@ -216,7 +320,7 @@ public class ManufacturingEventJsonRepository {
         );
     }
 
-    public int restoreBlockedEvents(long equipmentId, String equipmentCode) {
+    public int restoreBlockedEvents(Long equipmentId, String equipmentCode) {
         return jdbcTemplate.update(
                 """
                         UPDATE manufacturing_event_json
@@ -226,6 +330,19 @@ public class ManufacturingEventJsonRepository {
                           AND dispatch_status = 'BLOCKED' AND COALESCE(is_sent, 0) = 0
                         """, equipmentId, equipmentCode
         );
+    }
+
+    public boolean hasBlockedEventsByCarMasterId(long carMasterId) {
+        Integer count = jdbcTemplate.queryForObject(
+                """
+                        SELECT COUNT(1)
+                        FROM manufacturing_event_json
+                        WHERE car_master_id = ? AND dispatch_status = 'BLOCKED'
+                        """,
+                Integer.class,
+                carMasterId
+        );
+        return count != null && count > 0;
     }
 
     private RowMapper<StoredManufacturingEvent> rowMapper() {
@@ -290,7 +407,14 @@ public class ManufacturingEventJsonRepository {
         return message.length() <= 2_000 ? message : message.substring(0, 2_000);
     }
 
-    private record PendingActivation(long id, String healthStatus, String operationStatus) {}
+    private record PendingActivation(
+            long id,
+            long carMasterId,
+            ProcessCode processCode,
+            String healthStatus,
+            String operationStatus,
+            boolean hasPreviousAbnormal
+    ) {}
 
     public record StoredManufacturingEvent(
             ManufacturingRawEvent payload,
@@ -305,5 +429,54 @@ public class ManufacturingEventJsonRepository {
         public long id() { return payload.id(); }
         public String eventId() { return payload.eventId(); }
         public String equipmentCode() { return payload.equipmentCode(); }
+    }
+    public int releaseNextProcessByEventId(String eventId) {
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json next_event
+                        JOIN manufacturing_event_json current_event
+                          ON next_event.car_master_id = current_event.car_master_id
+                        SET next_event.dispatch_status = 'READY',
+                            next_event.updated_at = CURRENT_TIMESTAMP
+                        WHERE current_event.event_id = ?
+                          AND current_event.analysis_status = 'NORMAL'
+                          AND current_event.dispatch_status = 'SENT'
+                          AND next_event.dispatch_status = 'PENDING'
+                          AND next_event.process_code = CASE current_event.process_code
+                              WHEN 'PRESS' THEN 'BODY'
+                              WHEN 'BODY' THEN 'PAINT'
+                              WHEN 'PAINT' THEN 'ASSEMBLY'
+                              ELSE NULL
+                          END
+                        """,
+                eventId
+        );
+    }
+
+    public int releaseNextProcessByCurrentRowId(Long currentEventRowId) {
+        if (currentEventRowId == null) {
+            return 0;
+        }
+
+        return jdbcTemplate.update(
+                """
+                        UPDATE manufacturing_event_json next_event
+                        JOIN manufacturing_event_json current_event
+                          ON next_event.car_master_id = current_event.car_master_id
+                        SET next_event.dispatch_status = 'READY',
+                            next_event.updated_at = CURRENT_TIMESTAMP
+                        WHERE current_event.id = ?
+                          AND current_event.analysis_status = 'NORMAL'
+                          AND current_event.dispatch_status = 'SENT'
+                          AND next_event.dispatch_status = 'PENDING'
+                          AND next_event.process_code = CASE current_event.process_code
+                              WHEN 'PRESS' THEN 'BODY'
+                              WHEN 'BODY' THEN 'PAINT'
+                              WHEN 'PAINT' THEN 'ASSEMBLY'
+                              ELSE NULL
+                          END
+                        """,
+                currentEventRowId
+        );
     }
 }
