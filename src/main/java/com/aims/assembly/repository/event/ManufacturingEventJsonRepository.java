@@ -3,7 +3,7 @@ package com.aims.assembly.repository.event;
 import com.aims.assembly.common.status.KafkaErrorStatus;
 import com.aims.assembly.domain.enums.AnalysisStatus;
 import com.aims.assembly.domain.enums.DispatchStatus;
-import com.aims.assembly.domain.enums.EquipmentHealthStatus;
+
 import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
@@ -119,7 +119,7 @@ public class ManufacturingEventJsonRepository {
         List<PendingActivation> candidates = jdbcTemplate.query(
                 """
                         SELECT e.id, e.car_master_id, e.process_code,
-                               q.health_status, q.current_status,
+                               q.current_status,
                                EXISTS (
                                    SELECT 1 FROM manufacturing_event_json previous_abnormal
                                    WHERE previous_abnormal.car_master_id = e.car_master_id
@@ -148,15 +148,13 @@ public class ManufacturingEventJsonRepository {
                         rs.getLong("id"),
                         rs.getLong("car_master_id"),
                         ProcessCode.valueOf(rs.getString("process_code")),
-                        rs.getString("health_status"),
                         rs.getString("current_status"),
                         rs.getBoolean("has_previous_abnormal")),
                 virtualNow, Math.min(Math.max(limit, 1), 1_000)
         );
         int updated = 0;
         for (PendingActivation candidate : candidates) {
-            boolean faulted = isUnavailableHealthStatus(candidate.healthStatus())
-                    || "FAULT".equals(candidate.operationStatus())
+            boolean faulted = "FAULT".equals(candidate.operationStatus())
                     || "STOPPED".equals(candidate.operationStatus())
                     || candidate.hasPreviousAbnormal()
                     || !hasRequiredPreviousProcessCompleted(candidate);
@@ -172,11 +170,6 @@ public class ManufacturingEventJsonRepository {
             );
         }
         return updated;
-    }
-
-    private boolean isUnavailableHealthStatus(String healthStatus) {
-        return EquipmentHealthStatus.WARNING.name().equals(healthStatus)
-                || EquipmentHealthStatus.CRITICAL.name().equals(healthStatus);
     }
 
     private boolean hasRequiredPreviousProcessCompleted(PendingActivation candidate) {
@@ -411,7 +404,6 @@ public class ManufacturingEventJsonRepository {
             long id,
             long carMasterId,
             ProcessCode processCode,
-            String healthStatus,
             String operationStatus,
             boolean hasPreviousAbnormal
     ) {}
@@ -433,21 +425,23 @@ public class ManufacturingEventJsonRepository {
     public int releaseNextProcessByEventId(String eventId) {
         return jdbcTemplate.update(
                 """
-                        UPDATE manufacturing_event_json next_event
-                        JOIN manufacturing_event_json current_event
-                          ON next_event.car_master_id = current_event.car_master_id
-                        SET next_event.dispatch_status = 'READY',
-                            next_event.updated_at = CURRENT_TIMESTAMP
-                        WHERE current_event.event_id = ?
-                          AND current_event.analysis_status = 'NORMAL'
-                          AND current_event.dispatch_status = 'SENT'
-                          AND next_event.dispatch_status = 'PENDING'
-                          AND next_event.process_code = CASE current_event.process_code
-                              WHEN 'PRESS' THEN 'BODY'
-                              WHEN 'BODY' THEN 'PAINT'
-                              WHEN 'PAINT' THEN 'ASSEMBLY'
-                              ELSE NULL
-                          END
+                        UPDATE manufacturing_event_json
+                        SET dispatch_status = 'READY',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE dispatch_status = 'PENDING'
+                          AND (car_master_id, process_code) = (
+                              SELECT current_event.car_master_id,
+                                     CASE current_event.process_code
+                                         WHEN 'PRESS' THEN 'BODY'
+                                         WHEN 'BODY' THEN 'PAINT'
+                                         WHEN 'PAINT' THEN 'ASSEMBLY'
+                                         ELSE NULL
+                                     END
+                              FROM (SELECT * FROM manufacturing_event_json) current_event
+                              WHERE current_event.event_id = ?
+                                AND current_event.analysis_status = 'NORMAL'
+                                AND current_event.dispatch_status = 'SENT'
+                          )
                         """,
                 eventId
         );
@@ -460,21 +454,23 @@ public class ManufacturingEventJsonRepository {
 
         return jdbcTemplate.update(
                 """
-                        UPDATE manufacturing_event_json next_event
-                        JOIN manufacturing_event_json current_event
-                          ON next_event.car_master_id = current_event.car_master_id
-                        SET next_event.dispatch_status = 'READY',
-                            next_event.updated_at = CURRENT_TIMESTAMP
-                        WHERE current_event.id = ?
-                          AND current_event.analysis_status = 'NORMAL'
-                          AND current_event.dispatch_status = 'SENT'
-                          AND next_event.dispatch_status = 'PENDING'
-                          AND next_event.process_code = CASE current_event.process_code
-                              WHEN 'PRESS' THEN 'BODY'
-                              WHEN 'BODY' THEN 'PAINT'
-                              WHEN 'PAINT' THEN 'ASSEMBLY'
-                              ELSE NULL
-                          END
+                        UPDATE manufacturing_event_json
+                        SET dispatch_status = 'READY',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE dispatch_status = 'PENDING'
+                          AND (car_master_id, process_code) = (
+                              SELECT current_event.car_master_id,
+                                     CASE current_event.process_code
+                                         WHEN 'PRESS' THEN 'BODY'
+                                         WHEN 'BODY' THEN 'PAINT'
+                                         WHEN 'PAINT' THEN 'ASSEMBLY'
+                                         ELSE NULL
+                                     END
+                              FROM (SELECT * FROM manufacturing_event_json) current_event
+                              WHERE current_event.id = ?
+                                AND current_event.analysis_status = 'NORMAL'
+                                AND current_event.dispatch_status = 'SENT'
+                          )
                         """,
                 currentEventRowId
         );

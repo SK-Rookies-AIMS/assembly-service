@@ -304,13 +304,13 @@ class ManufacturingEventJsonRepositoryTest {
     }
 
     @Test
-    void activatesPendingEventAsBlockedWhenTargetEquipmentHealthIsWarning() {
+    void activatesPendingEventAsReadyWhenTargetEquipmentHealthIsWarning() {
         LocalDateTime now = LocalDateTime.now();
         jdbc.update("UPDATE equipment SET health_status='WARNING', current_status='WARNING' WHERE id=10");
         insert(1, now.minusSeconds(1), "PENDING", false);
 
         assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
-        assertThat(status(1)).isEqualTo(DispatchStatus.BLOCKED.name());
+        assertThat(status(1)).isEqualTo(DispatchStatus.READY.name());
     }
 
     @Test

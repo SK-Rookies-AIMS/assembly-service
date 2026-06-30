@@ -18,7 +18,6 @@ public record EquipmentStatusEvent(
         String equipmentName,
         String equipmentType,
         String operationStatus,
-        String healthStatus,
         String riskLevel,
         double overallRiskScore,
         double operationRate,
@@ -30,12 +29,12 @@ public record EquipmentStatusEvent(
             String equipmentEventId, String eventId, LocalDateTime eventTime,
             String factoryCode, String lineCode, ProcessCode processCode,
             String equipmentCode, String equipmentName,
-            String equipmentType, String operationStatus, String healthStatus,
+            String equipmentType, String operationStatus,
             String riskLevel, double overallRiskScore, double operationRate
     ) {
         this(equipmentEventId, eventId, eventTime, factoryCode, lineCode, processCode,
                 equipmentCode, equipmentName, equipmentType, operationStatus,
-                healthStatus, riskLevel, overallRiskScore, operationRate, null,
-                "NORMAL".equals(healthStatus) ? "RECOVERED" : "FAULT", null);
+                riskLevel, overallRiskScore, operationRate, null,
+                "FAULT".equals(operationStatus) || "STOPPED".equals(operationStatus) ? "FAULT" : "RECOVERED", null);
     }
 }

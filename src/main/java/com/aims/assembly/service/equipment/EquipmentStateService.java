@@ -1,10 +1,8 @@
 package com.aims.assembly.service.equipment;
 
 import com.aims.assembly.domain.equipment.Equipment;
-import com.aims.assembly.domain.enums.EquipmentHealthStatus;
 import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.kafka.model.EquipmentStatusEvent;
-import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.repository.equipment.EquipmentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -22,28 +20,11 @@ public class EquipmentStateService {
     private final ApplicationEventPublisher eventPublisher;
 
     @Transactional("sampleTransactionManager")
-    public EquipmentStatusEvent markFault(ManufacturingAnalysisEvent analysis) {
-        Equipment equipment = equipmentRepository.findByEquipmentCode(analysis.equipmentCode())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Equipment not found: " + analysis.equipmentCode()));
-        String reason = analysis.reason() == null ? "Equipment fault detected"
-                : analysis.reason().mainReason();
-        boolean stopRequired = analysis.analysisResult().isEquipmentFault();
-        LocalDateTime changedAt = LocalDateTime.now();
-        equipment.markFault(changedAt, reason, stopRequired);
-        EquipmentStatusEvent event = statusEvent(equipment, analysis.eventId(), changedAt,
-                "FAULT", analysis.riskLevel(), analysis.riskScores().overallRiskScore(),
-                analysis.operationRate());
-        eventPublisher.publishEvent(new EquipmentStateCommittedEvent(event));
-        return event;
-    }
-
-    @Transactional("sampleTransactionManager")
     public EquipmentStatusEvent recover(String equipmentCode, String reason) {
         Equipment equipment = equipmentRepository.findByEquipmentCode(equipmentCode)
                 .orElseThrow(() -> new IllegalArgumentException("Equipment not found: " + equipmentCode));
         LocalDateTime changedAt = LocalDateTime.now();
-        equipment.recover(changedAt, reason);
+        equipment.applyStatus(EquipmentOperationStatus.RUNNING, changedAt, reason);
         EquipmentStatusEvent event = statusEvent(equipment,
                 "RECOVERY-" + UUID.randomUUID(), changedAt, "RECOVERED", "NORMAL", 0, 0);
         eventPublisher.publishEvent(new EquipmentStateCommittedEvent(event));
@@ -59,7 +40,6 @@ public class EquipmentStateService {
                                 + ", code=" + event.equipmentCode()));
         equipment.applyStatus(
                 operationStatus(event.operationStatus()),
-                healthStatus(event.healthStatus()),
                 event.eventTime() == null ? LocalDateTime.now() : event.eventTime(),
                 event.reason()
         );
@@ -69,22 +49,7 @@ public class EquipmentStateService {
         if (status == null || status.isBlank()) {
             return EquipmentOperationStatus.RUNNING;
         }
-        return switch (status.toUpperCase()) {
-            case "ERROR", "DOWN", "FAILURE", "CRITICAL" -> EquipmentOperationStatus.FAULT;
-            default -> EquipmentOperationStatus.valueOf(status.toUpperCase());
-        };
-    }
-
-    private EquipmentHealthStatus healthStatus(String status) {
-        if (status == null || status.isBlank()) {
-            return EquipmentHealthStatus.NORMAL;
-        }
-        return switch (status.toUpperCase()) {
-            case "FAULT", "ERROR", "STOPPED", "DOWN", "FAILURE", "CRITICAL" ->
-                    EquipmentHealthStatus.CRITICAL;
-            case "WARNING" -> EquipmentHealthStatus.WARNING;
-            default -> EquipmentHealthStatus.NORMAL;
-        };
+        return EquipmentOperationStatus.valueOf(status.toUpperCase());
     }
 
     private EquipmentStatusEvent statusEvent(
@@ -97,7 +62,7 @@ public class EquipmentStateService {
                 equipment.getEquipmentName(), equipment.getEquipmentType() == null ? null
                         : equipment.getEquipmentType().name(),
                 equipment.getCurrentStatus() == null ? null : equipment.getCurrentStatus().name(),
-                equipment.getHealthStatus().name(), riskLevel, riskScore, operationRate,
+                riskLevel, riskScore, operationRate,
                 equipment.getId(), changeType, equipment.getReason());
     }
 

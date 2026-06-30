@@ -66,6 +66,13 @@ public class KafkaMessageTraceStore {
                 .toList();
     }
 
+    public List<KafkaMessageTrace> findRecentAlerts(String alertTopic, int limit) {
+        return traces.stream()
+                .filter(trace -> alertTopic.equals(trace.topic()))
+                .limit(limit)
+                .toList();
+    }
+
     private void add(KafkaMessageTrace trace) {
         // 최신 이력 우선 저장
         traces.addFirst(trace);

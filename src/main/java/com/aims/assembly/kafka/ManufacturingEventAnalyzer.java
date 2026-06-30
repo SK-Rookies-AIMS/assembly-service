@@ -215,11 +215,6 @@ public class ManufacturingEventAnalyzer {
                 analysis.equipmentName(),
                 analysis.equipmentType(),
                 "CRITICAL".equals(analysis.riskLevel()) ? "STOPPED" : "RUNNING",
-                switch (analysis.riskLevel()) {
-                    case "CRITICAL" -> "CRITICAL";
-                    case "WARNING" -> "WARNING";
-                    default -> "NORMAL";
-                },
                 analysis.riskLevel(),
                 analysis.riskScores().overallRiskScore(),
                 analysis.operationRate()
@@ -228,7 +223,8 @@ public class ManufacturingEventAnalyzer {
 
     public EquipmentStatusEvent toEquipmentStatusEvent(ManufacturingRawEvent event) {
         String operationStatus = equipmentOperationStatus(event);
-        String healthStatus = equipmentHealthStatus(operationStatus);
+        String riskLevel = "FAULT".equals(operationStatus) || "STOPPED".equals(operationStatus) ? "CRITICAL"
+                : ("WARNING".equals(operationStatus) ? "WARNING" : "LOW");
         return new EquipmentStatusEvent(
                 "EQEVT-" + UUID.randomUUID(),
                 event.eventId(),
@@ -240,9 +236,8 @@ public class ManufacturingEventAnalyzer {
                 text(event.eventJson(), "equipment", "equipmentName"),
                 event.equipmentType(),
                 operationStatus,
-                healthStatus,
-                healthStatus,
-                "CRITICAL".equals(healthStatus) ? 100.0 : 60.0,
+                riskLevel,
+                "CRITICAL".equals(riskLevel) ? 100.0 : ("WARNING".equals(riskLevel) ? 60.0 : 0.0),
                 0.0,
                 event.equipmentId(),
                 "FAULT",
@@ -481,25 +476,16 @@ public class ManufacturingEventAnalyzer {
                 || number(event.eventJson(), "processData", "assembly", "fasteningErrorCount") > 0;
     }
 
-    /**
-     * 설비 이상 상태 판단 (상태값 기반).
-     * FAULT / STOPPED / ERROR / DOWN 상태값 또는 해당 키워드를 포함한 eventType 을 기준으로 한다.
-     * 수치 계산식(equipmentRisk >= 60) 은 사용하지 않는다.
-     */
     private boolean isEquipmentAbnormalStatus(ManufacturingRawEvent event) {
         // 1) envelope 컬럼의 equipmentStatus 확인
         if (isAbnormalStatusValue(event.equipmentStatus())) return true;
         // 2) event_json 내부 equipmentStatus.operationStatus 확인
         if (isAbnormalStatusValue(text(event.eventJson(), "equipmentStatus", "operationStatus"))) return true;
-        // 3) event_json 내부 equipmentStatus.healthStatus 확인
-        if (isAbnormalStatusValue(text(event.eventJson(), "equipmentStatus", "healthStatus"))) return true;
-        // 4) eventType 키워드 기반 확인
+        // 3) eventType 키워드 기반 확인
         String eventType = event.eventType();
         if (eventType != null) {
             String upper = eventType.toUpperCase();
-            return upper.contains("FAULT") || upper.contains("STOPPED")
-                    || upper.contains("ERROR") || upper.contains("DOWN")
-                    || upper.contains("FAILURE");
+            return upper.contains("FAULT") || upper.contains("STOPPED") || upper.contains("WARNING");
         }
         return false;
     }
@@ -507,9 +493,7 @@ public class ManufacturingEventAnalyzer {
     private boolean isAbnormalStatusValue(String status) {
         if (status == null) return false;
         String upper = status.toUpperCase();
-        return upper.equals("FAULT") || upper.equals("STOPPED")
-                || upper.equals("ERROR") || upper.equals("DOWN")
-                || upper.equals("WARNING") || upper.equals("CRITICAL");
+        return upper.equals("FAULT") || upper.equals("STOPPED") || upper.equals("WARNING");
     }
 
     private String equipmentOperationStatus(ManufacturingRawEvent event) {
@@ -518,25 +502,9 @@ public class ManufacturingEventAnalyzer {
             status = text(event.eventJson(), "equipmentStatus", "operationStatus");
         }
         if (status == null || status.isBlank()) {
-            status = text(event.eventJson(), "equipmentStatus", "healthStatus");
-        }
-        if (status == null || status.isBlank()) {
             return "FAULT";
         }
-        return switch (status.toUpperCase()) {
-            case "ERROR", "DOWN", "FAILURE", "CRITICAL" -> "FAULT";
-            case "STOPPED" -> "STOPPED";
-            case "WARNING" -> "WARNING";
-            default -> status.toUpperCase();
-        };
-    }
-
-    private String equipmentHealthStatus(String operationStatus) {
-        return switch (operationStatus == null ? "" : operationStatus.toUpperCase()) {
-            case "WARNING" -> "WARNING";
-            case "RUNNING", "IDLE", "MAINTENANCE" -> "NORMAL";
-            default -> "CRITICAL";
-        };
+        return status.toUpperCase();
     }
 
     private String buildEquipmentStatusReason(ManufacturingRawEvent event, boolean isAbnormal) {
@@ -550,38 +518,31 @@ public class ManufacturingEventAnalyzer {
         if (isAbnormalStatusValue(opStatus)) {
             sb.append(" operationStatus=").append(opStatus);
         }
-        String healthStatus = text(event.eventJson(), "equipmentStatus", "healthStatus");
-        if (isAbnormalStatusValue(healthStatus)) {
-            sb.append(" healthStatus=").append(healthStatus);
-        }
         String eventType = event.eventType();
         if (eventType != null) {
             String upper = eventType.toUpperCase();
-            if (upper.contains("FAULT") || upper.contains("STOPPED")
-                    || upper.contains("ERROR") || upper.contains("DOWN")
-                    || upper.contains("FAILURE")) {
+            if (upper.contains("FAULT") || upper.contains("STOPPED") || upper.contains("WARNING")) {
                 sb.append(" eventType=").append(eventType);
             }
         }
         return sb.toString();
     }
 
+    private double healthStatusWeight(ManufacturingRawEvent event) {
+        String status = text(event.eventJson(), "equipmentStatus", "operationStatus");
+        if (status == null) {
+            status = event.equipmentStatus();
+        }
+        return switch (status == null ? "" : status.toUpperCase()) {
+            case "FAULT" -> 50;
+            case "WARNING" -> 25;
+            default -> 0;
+        };
+    }
+
     private double targetCycleTime(ManufacturingRawEvent event) {
         double target = number(event.eventJson(), "processData", "press", "targetCycleTimeSec");
         return target > 0 ? target : 40;
-    }
-
-    private double healthStatusWeight(ManufacturingRawEvent event) {
-        String healthStatus = text(event.eventJson(), "equipmentStatus", "healthStatus");
-        if (healthStatus == null) {
-            healthStatus = event.equipmentStatus();
-        }
-        return switch (healthStatus == null ? "" : healthStatus.toUpperCase()) {
-            case "FAULT", "CRITICAL" -> 50;
-            case "WARNING" -> 25;
-            case "MAINTENANCE" -> 15;
-            default -> 0;
-        };
     }
 
     private String mainReason(

@@ -9,10 +9,13 @@ import com.aims.assembly.dto.kafka.ManufacturingAnalysisDetailResponse;
 import com.aims.assembly.dto.kafka.ManufacturingCarCompletionResponse;
 import com.aims.assembly.dto.kafka.ManufacturingAnalysisResultResponse;
 import com.aims.assembly.dto.kafka.StoredManufacturingEventResponse;
+import com.aims.assembly.dto.kafka.ManufacturingAlertResponse;
+import com.aims.assembly.kafka.model.ManufacturingAlertEvent;
 import com.aims.assembly.service.manufacturing.ManufacturingAnalysisResultQueryService;
 import com.aims.assembly.service.manufacturing.ManufacturingRawEventService;
 import com.aims.assembly.service.equipment.EquipmentStateService;
 import com.aims.assembly.kafka.model.EquipmentStatusEvent;
+import tools.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -54,6 +57,7 @@ public class ManufacturingKafkaTestController {
     private final KafkaDiagnosticsService diagnosticsService;
     private final EquipmentStateService equipmentStateService;
     private final ManufacturingAnalysisResultQueryService analysisResultQueryService;
+    private final ObjectMapper objectMapper;
 
     @Operation(
             summary = "SampleDB의 다음 미전송 raw 이벤트 조회",
@@ -350,5 +354,72 @@ public class ManufacturingKafkaTestController {
                 traceStore.findRecent(eventId),
                 "Recent in-memory Kafka message traces"
         );
+    }
+
+    @Operation(
+            summary = "최근 발행된 알람(Alert) 메시지 목록 조회",
+            description = """
+                    Kafka alert 토픽에 발행되었거나 수신된 최근 알람 메시지 목록을 조회합니다.
+                    공정 이상(MANUFACTURING_ABNORMAL)과 설비 이상(EQUIPMENT_ABNORMAL)이 모두 포함됩니다.
+                    """
+    )
+    @GetMapping("/alerts")
+    public ApiResponse<List<ManufacturingAlertResponse>> alerts(
+            @Parameter(
+                    description = "조회할 알람 건수 제한. 1~100 범위로 제한됩니다.",
+                    example = "20"
+            )
+            @RequestParam(defaultValue = "20") int limit
+    ) {
+        String alertTopic = kafkaProperties.getTopics().getAlert().getName();
+        int maxLimit = Math.max(1, Math.min(limit, 100));
+        var rawTraces = traceStore.findRecentAlerts(alertTopic, maxLimit);
+        
+        List<ManufacturingAlertResponse> responses = rawTraces.stream()
+                .map(trace -> {
+                    try {
+                        ManufacturingAlertEvent event = objectMapper.readValue(trace.payload(), ManufacturingAlertEvent.class);
+                        return new ManufacturingAlertResponse(
+                                event.alertId(),
+                                event.eventId(),
+                                event.analysisId(),
+                                event.createdAt(),
+                                event.processCode(),
+                                event.equipmentCode(),
+                                event.equipmentName(),
+                                event.carMasterId(),
+                                event.equipmentId(),
+                                event.alertType(),
+                                event.alertTitle(),
+                                event.alertMessage(),
+                                event.riskLevel(),
+                                event.riskScore(),
+                                event.alertStatus(),
+                                trace.recordedAt()
+                        );
+                    } catch (Exception e) {
+                        return new ManufacturingAlertResponse(
+                                null,
+                                trace.eventId(),
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                "UNKNOWN",
+                                "알람 메시지 파싱 실패",
+                                trace.payload(),
+                                null,
+                                0.0,
+                                "UNKNOWN",
+                                trace.recordedAt()
+                        );
+                    }
+                })
+                .toList();
+
+        return ApiResponse.success(responses, "Recent manufacturing alerts from Kafka");
     }
 }
