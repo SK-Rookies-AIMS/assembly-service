@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -35,6 +36,7 @@ public class ManufacturingAnalysisResultService {
     private final PaintAnalysisResultRepository paintRepository;
     private final AssemblyAnalysisResultRepository assemblyRepository;
     private final ManufacturingEventAnalyzer analyzer;
+    private final ObjectMapper objectMapper;
 
     /**
      * 분석 결과를 MainDB manufacturing_analysis_result 에 저장하고,
@@ -94,65 +96,83 @@ public class ManufacturingAnalysisResultService {
         Map<String, Object> json = raw.eventJson();
         switch (raw.processCode()) {
             case PRESS -> {
-                boolean countIncrease = bool(json, "processData", "press", "countIncreaseYn");
-                double targetCycleTime = number(json, "processData", "press", "targetCycleTimeSec");
-                double actualCycleTime = number(json, "processMetrics", "cycleTimeSec");
-                double stationDelaySec = number(json, "processMetrics", "stationDelaySec");
+                Boolean countIncrease = bool(json, "processData", "press", "countIncreaseYn");
+                Double targetCycleTime = doubleVal(json, "processData", "press", "targetCycleTimeSec");
+                Double actualCycleTime = doubleVal(json, "processMetrics", "cycleTimeSec");
+                Double timestampDelaySec = doubleVal(json, "processData", "press", "timestampDelaySec");
                 pressRepository.save(
                         PressAnalysisResult.builder()
                                 .analysisResult(savedResult)
                                 .countIncreaseYn(countIncrease)
-                                .targetCycleTimeSec(targetCycleTime > 0 ? targetCycleTime : null)
-                                .actualCycleTimeSec(actualCycleTime > 0 ? actualCycleTime : null)
-                                .cycleTimeGapSec(actualCycleTime > 0 && targetCycleTime > 0
+                                .targetCycleTimeSec(targetCycleTime)
+                                .actualCycleTimeSec(actualCycleTime)
+                                .cycleTimeGapSec(actualCycleTime != null && targetCycleTime != null
                                         ? actualCycleTime - targetCycleTime : null)
-                                .timestampDelaySec(stationDelaySec > 0 ? stationDelaySec : null)
+                                .timestampDelaySec(timestampDelaySec)
                                 .build()
                 );
             }
             case BODY -> {
-                double robotVibrationScore =
-                        number(json, "sensor", "robotArmVibration", "vibrationScore");
-                double frequencyHz = number(json, "sensor", "robotArmVibration", "frequencyHz");
-                String frequencyPeakBand = frequencyHz > 0
-                        ? (frequencyHz < 100 ? "LOW" : frequencyHz < 500 ? "MID" : "HIGH")
-                        : null;
+                Double robotVibrationScore = doubleVal(json, "sensor", "robotArmVibration", "vibrationScore");
+                Double frequencyHz = doubleVal(json, "sensor", "robotArmVibration", "frequencyHz");
+                String frequencyPeakBand = text(json, "processData", "body", "frequencyPeakBand");
+                String robotOperationMode = text(json, "processData", "body", "robotOperationMode");
+                String robotMotionStatus = text(json, "processData", "body", "robotMotionStatus");
+                
+                Object frequencyBandsObj = value(json, "processData", "body", "frequencyBands");
+                String frequencyBandsJson = null;
+                if (frequencyBandsObj != null) {
+                    try {
+                        frequencyBandsJson = objectMapper.writeValueAsString(frequencyBandsObj);
+                    } catch (Exception e) {
+                        log.error("Failed to serialize frequencyBands", e);
+                    }
+                }
+
                 bodyRepository.save(
                         BodyAnalysisResult.builder()
                                 .analysisResult(savedResult)
-                                .robotMotionStatus(savedResult.getIsAbnormal() ? "ABNORMAL" : "NORMAL")
-                                .robotVibrationScore(robotVibrationScore > 0 ? robotVibrationScore : null)
+                                .robotMotionStatus(robotMotionStatus != null ? robotMotionStatus : (savedResult.getIsAbnormal() ? "ABNORMAL" : "NORMAL"))
+                                .robotOperationMode(robotOperationMode)
+                                .robotVibrationScore(robotVibrationScore)
                                 .frequencyPeakBand(frequencyPeakBand)
-                                .frequencyPeakValue(frequencyHz > 0 ? frequencyHz : null)
+                                .frequencyPeakValue(frequencyHz)
+                                .frequencyBandsJson(frequencyBandsJson)
                                 .build()
                 );
             }
             case PAINT -> {
-                double defectScore = number(json, "processData", "paint", "defectScore");
-                double thermalStdTemp = number(json, "processData", "paint", "thermalStdTemp");
-                double surfaceQualityScore =
-                        number(json, "processData", "paint", "surfaceQualityScore");
+                Double defectScore = doubleVal(json, "processData", "paint", "defectScore");
+                Double thermalStdTemp = doubleVal(json, "processData", "paint", "thermalStdTemp");
+                Double surfaceQualityScore = doubleVal(json, "processData", "paint", "surfaceQualityScore");
                 String visionLabel = text(json, "processData", "paint", "visionLabel");
+                String imagePosition = text(json, "processData", "paint", "imagePosition");
+                Double thicknessValue = doubleVal(json, "processData", "paint", "thicknessValue");
+
                 paintRepository.save(
                         PaintAnalysisResult.builder()
                                 .analysisResult(savedResult)
-                                .defectScore(defectScore > 0 ? defectScore : null)
-                                .thermalStdTemp(thermalStdTemp > 0 ? thermalStdTemp : null)
-                                .surfaceQualityScore(surfaceQualityScore > 0 ? surfaceQualityScore : null)
+                                .defectScore(defectScore)
+                                .thermalStdTemp(thermalStdTemp)
+                                .surfaceQualityScore(surfaceQualityScore)
                                 .visionLabel(visionLabel)
+                                .imagePosition(imagePosition)
+                                .thicknessValue(thicknessValue)
                                 .build()
                 );
             }
             case ASSEMBLY -> {
-                int sequenceErrorCount =
-                        (int) number(json, "processData", "assembly", "sequenceErrorCount");
-                int missingPartCount =
-                        (int) number(json, "processData", "assembly", "missingPartCount");
-                int fasteningErrorCount =
-                        (int) number(json, "processData", "assembly", "fasteningErrorCount");
+                String expectedSequence = text(json, "processData", "assembly", "expectedSequence");
+                String actualSequence = text(json, "processData", "assembly", "actualSequence");
+                Integer sequenceErrorCount = intVal(json, "processData", "assembly", "sequenceErrorCount");
+                Integer missingPartCount = intVal(json, "processData", "assembly", "missingPartCount");
+                Integer fasteningErrorCount = intVal(json, "processData", "assembly", "fasteningErrorCount");
+
                 assemblyRepository.save(
                         AssemblyAnalysisResult.builder()
                                 .analysisResult(savedResult)
+                                .expectedSequence(expectedSequence)
+                                .actualSequence(actualSequence)
                                 .sequenceErrorCount(sequenceErrorCount)
                                 .missingPartCount(missingPartCount)
                                 .fasteningErrorCount(fasteningErrorCount)
@@ -160,6 +180,39 @@ public class ManufacturingAnalysisResultService {
                 );
             }
         }
+    }
+
+    private Double doubleVal(Map<String, Object> json, String... path) {
+        Object val = value(json, path);
+        return val instanceof Number n ? n.doubleValue() : null;
+    }
+
+    private Integer intVal(Map<String, Object> json, String... path) {
+        Object val = value(json, path);
+        return val instanceof Number n ? n.intValue() : null;
+    }
+
+    private String camelToSnake(String camel) {
+        if (camel == null) return null;
+        return camel.replaceAll("([a-z])([A-Z])", "$1_$2").toLowerCase();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object value(Map<String, Object> source, String... path) {
+        Object current = source;
+        for (String key : path) {
+            if (!(current instanceof Map<?, ?> map)) return null;
+            Map<String, Object> currentMap = (Map<String, Object>) map;
+            Object next = currentMap.get(key);
+            if (next == null) {
+                String snakeKey = camelToSnake(key);
+                if (snakeKey != null && !snakeKey.equals(key)) {
+                    next = currentMap.get(snakeKey);
+                }
+            }
+            current = next;
+        }
+        return current;
     }
 
     private String abnormalType(ManufacturingAnalysisEvent.AnalysisResult result, double riskScore) {
@@ -185,33 +238,18 @@ public class ManufacturingAnalysisResultService {
         return Severity.NORMAL;
     }
 
-    @SuppressWarnings("unchecked")
     private double number(Map<String, Object> source, String... path) {
-        Object current = source;
-        for (String key : path) {
-            if (!(current instanceof Map<?, ?> map)) return 0.0;
-            current = ((Map<String, Object>) map).get(key);
-        }
-        return current instanceof Number n ? n.doubleValue() : 0.0;
+        Object val = value(source, path);
+        return val instanceof Number n ? n.doubleValue() : 0.0;
     }
 
-    @SuppressWarnings("unchecked")
     private boolean bool(Map<String, Object> source, String... path) {
-        Object current = source;
-        for (String key : path) {
-            if (!(current instanceof Map<?, ?> map)) return false;
-            current = ((Map<String, Object>) map).get(key);
-        }
-        return current instanceof Boolean b && b;
+        Object val = value(source, path);
+        return val instanceof Boolean b && b;
     }
 
-    @SuppressWarnings("unchecked")
     private String text(Map<String, Object> source, String... path) {
-        Object current = source;
-        for (String key : path) {
-            if (!(current instanceof Map<?, ?> map)) return null;
-            current = ((Map<String, Object>) map).get(key);
-        }
-        return current == null ? null : current.toString();
+        Object val = value(source, path);
+        return val == null ? null : val.toString();
     }
 }
