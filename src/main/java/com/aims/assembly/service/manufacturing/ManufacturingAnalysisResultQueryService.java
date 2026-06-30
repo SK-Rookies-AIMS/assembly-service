@@ -1,6 +1,9 @@
 package com.aims.assembly.service.manufacturing;
 
 import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
+import com.aims.assembly.domain.enums.ProcessCode;
+import com.aims.assembly.domain.enums.Severity;
+import com.aims.assembly.dto.kafka.ManufacturingCarCompletionResponse;
 import com.aims.assembly.dto.kafka.ManufacturingAnalysisDetailResponse;
 import com.aims.assembly.dto.kafka.ManufacturingAnalysisResultResponse;
 import com.aims.assembly.kafka.ManufacturingEventAnalyzer;
@@ -17,6 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -45,6 +51,78 @@ public class ManufacturingAnalysisResultQueryService {
                 .stream()
                 .map(ManufacturingAnalysisResultResponse::from)
                 .toList();
+    }
+
+    public ManufacturingCarCompletionResponse findCarCompletion(long carMasterId) {
+        List<ManufacturingAnalysisResult> results =
+                repository.findByCarMasterIdOrderByEventTimeAscAnalyzedAtAsc(carMasterId);
+        Map<ProcessCode, ManufacturingAnalysisResult> latestByProcess =
+                new EnumMap<>(ProcessCode.class);
+        results.stream()
+                .sorted(Comparator
+                        .comparing(
+                                ManufacturingAnalysisResult::getEventTime,
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(
+                                ManufacturingAnalysisResult::getAnalyzedAt,
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                .forEach(result -> latestByProcess.put(result.getProcessCode(), result));
+
+        List<ManufacturingCarCompletionResponse.ProcessCompletion> processes =
+                List.of(ProcessCode.PRESS, ProcessCode.BODY, ProcessCode.PAINT, ProcessCode.ASSEMBLY)
+                        .stream()
+                        .map(process -> processCompletion(process, latestByProcess.get(process)))
+                        .toList();
+
+        int normalCompleted = (int) processes.stream()
+                .filter(ManufacturingCarCompletionResponse.ProcessCompletion::normalCompleted)
+                .count();
+        boolean hasAbnormal = processes.stream()
+                .anyMatch(process -> Boolean.TRUE.equals(process.isAbnormal())
+                        || process.severity() != null && !Severity.NORMAL.name().equals(process.severity()));
+        boolean finalCompleted = normalCompleted == 4;
+        boolean blocked = eventRepository.hasBlockedEventsByCarMasterId(carMasterId);
+        String status;
+        if (finalCompleted) {
+            status = "FINAL_COMPLETED";
+        } else if (hasAbnormal) {
+            status = "ABNORMAL";
+        } else if (blocked) {
+            status = "BLOCKED";
+        } else if (normalCompleted == 0) {
+            status = "WAITING";
+        } else {
+            status = "IN_PROGRESS";
+        }
+        return new ManufacturingCarCompletionResponse(
+                carMasterId,
+                status,
+                finalCompleted,
+                normalCompleted,
+                4,
+                processes
+        );
+    }
+
+    private ManufacturingCarCompletionResponse.ProcessCompletion processCompletion(
+            ProcessCode process,
+            ManufacturingAnalysisResult result
+    ) {
+        if (result == null) {
+            return new ManufacturingCarCompletionResponse.ProcessCompletion(
+                    process, false, false, null, null, null, null);
+        }
+        boolean normalCompleted = Boolean.FALSE.equals(result.getIsAbnormal())
+                && result.getSeverity() == Severity.NORMAL;
+        return new ManufacturingCarCompletionResponse.ProcessCompletion(
+                process,
+                true,
+                normalCompleted,
+                result.getIsAbnormal(),
+                result.getSeverity() == null ? null : result.getSeverity().name(),
+                result.getEventId(),
+                result.getAnalysisId()
+        );
     }
 
     public ManufacturingAnalysisDetailResponse findDetailByEventId(String eventId) {

@@ -6,6 +6,7 @@ import com.aims.assembly.kafka.KafkaMessageTraceStore;
 import com.aims.assembly.kafka.model.KafkaPublishResult;
 import com.aims.assembly.properties.KafkaCustomProperties;
 import com.aims.assembly.dto.kafka.ManufacturingAnalysisDetailResponse;
+import com.aims.assembly.dto.kafka.ManufacturingCarCompletionResponse;
 import com.aims.assembly.dto.kafka.ManufacturingAnalysisResultResponse;
 import com.aims.assembly.dto.kafka.StoredManufacturingEventResponse;
 import com.aims.assembly.service.manufacturing.ManufacturingAnalysisResultQueryService;
@@ -243,6 +244,24 @@ public class ManufacturingKafkaTestController {
         return ApiResponse.success(
                 analysisResultQueryService.findRecent(limit),
                 "Recent manufacturing analysis results"
+        );
+    }
+
+    @Operation(
+            summary = "carMasterId 기준 완성본 차량 여부 조회",
+            description = """
+                    MainDB `manufacturing_analysis_result`를 car_master_id 기준으로 집계하여
+                    PRESS/BODY/PAINT/ASSEMBLY 네 공정이 모두 정상 완료되었는지 확인합니다.
+                    완료 조건은 각 공정 결과가 존재하고 `is_abnormal=false`, `severity=NORMAL`인 경우입니다.
+                    """
+    )
+    @GetMapping("/cars/{carMasterId}/completion")
+    public ApiResponse<ManufacturingCarCompletionResponse> carCompletion(
+            @PathVariable long carMasterId
+    ) {
+        return ApiResponse.success(
+                analysisResultQueryService.findCarCompletion(carMasterId),
+                "Manufacturing car completion status"
         );
     }
 

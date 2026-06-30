@@ -5,10 +5,12 @@ import com.aims.assembly.kafka.model.ManufacturingAlertEvent;
 import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
 import com.aims.assembly.common.status.KafkaErrorStatus;
+import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.service.manufacturing.ManufacturingProcessRouter;
 import com.aims.assembly.service.equipment.EquipmentStateService;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
+import com.aims.assembly.repository.event.ManufacturingEventJsonRepository.StoredManufacturingEvent;
 import com.aims.assembly.service.manufacturing.ManufacturingAnalysisResultService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +18,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
+
+import java.util.List;
 
 @Slf4j
 @Component
@@ -67,6 +71,7 @@ public class ManufacturingKafkaConsumer {
 
         // processCode 기반 PRESS/BODY/PAINT/ASSEMBLY 서비스 선택
         // 공정 분석 결과 생성 후 analysis 토픽 발행
+        boolean analysisStatusUpdated = false;
         try {
             // Case B: 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 감지 시 raw 단계에서 즉시 alert 발행
             // 분석 결과(processRisk)와 무관하게 독립적으로 발행된다
@@ -75,17 +80,52 @@ public class ManufacturingKafkaConsumer {
                         "Equipment abnormal status detected in raw event: eventId={}, equipment={}",
                         event.eventId(), event.equipmentCode()
                 );
+                producer.sendEquipment(analyzer.toEquipmentStatusEvent(event)).join();
                 producer.sendAlert(analyzer.toEquipmentStatusAlert(event)).join();
             }
 
             ManufacturingAnalysisEvent analysis = processRouter.route(event);
             analysisResultService.save(event, analysis);
-            producer.sendAnalysis(analysis).join();
             // NORMAL means analysis execution completed; defect/fault lives in the result payload.
-            eventRepository.markAnalysisCompleted(
-                    event.eventId(), isAbnormalAnalysis(analysis));
+            boolean abnormal = isAbnormalAnalysis(analysis);
+            int analysisStatusUpdatedRows = eventRepository.markAnalysisCompleted(event.eventId(), abnormal);
+            analysisStatusUpdated = analysisStatusUpdatedRows > 0;
+            log.info(
+                    "[MANUFACTURING_FLOW] analysis status update eventId={}, analysisStatus={}, updatedRows={}",
+                    event.eventId(),
+                    abnormal ? "ABNORMAL" : "NORMAL",
+                    analysisStatusUpdatedRows
+            );
+            StoredManufacturingEvent storedEvent = eventRepository.findByEventId(event.eventId())
+                    .orElse(null);
+            Long carMasterId = storedEvent == null
+                    ? event.carMasterId()
+                    : storedEvent.payload().carMasterId();
+            ProcessCode processCode = storedEvent == null
+                    ? event.processCode()
+                    : storedEvent.payload().processCode();
+            log.info(
+                    "[PROCESS_FLOW] current eventId={}, carMasterId={}, processCode={}, "
+                            + "analysisStatus={}, dispatchStatus={}",
+                    event.eventId(),
+                    carMasterId,
+                    processCode,
+                    abnormal ? "ABNORMAL" : "NORMAL",
+                    storedEvent == null ? "UNKNOWN" : storedEvent.dispatchStatus()
+            );
+            Long currentEventRowId = storedEvent == null ? null : storedEvent.id();
+
+            transitionFollowingProcesses(event.eventId(), currentEventRowId, carMasterId, processCode, abnormal);
+            producer.sendAnalysis(analysis).join();
         } catch (RuntimeException exception) {
-            eventRepository.markAnalysisFailed(event.eventId(), exception.getMessage());
+            if (!analysisStatusUpdated) {
+                int updatedRows = eventRepository.markAnalysisFailed(event.eventId(), exception.getMessage());
+                log.info(
+                        "[MANUFACTURING_FLOW] analysis status failed eventId={}, updatedRows={}",
+                        event.eventId(),
+                        updatedRows
+                );
+            }
             throw exception;
         }
     }
@@ -167,6 +207,7 @@ public class ManufacturingKafkaConsumer {
 
         // Dashboard Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "dashboard-consumer-group", event.eventId());
+        equipmentStateService.applyStatusEvent(event);
         if ("RECOVERED".equals(event.changeType())) {
             eventRepository.restoreBlockedEvents(event.equipmentId(), event.equipmentCode());
         } else if ("FAULT".equals(event.changeType())) {
@@ -221,8 +262,77 @@ public class ManufacturingKafkaConsumer {
 
     static boolean isAbnormalAnalysis(ManufacturingAnalysisEvent analysis) {
         var result = analysis.analysisResult();
-        return result.isAbnormal() || result.isQualityDefect()
+        return isNonNormalRiskLevel(analysis.riskLevel())
+                || result.isAbnormal() || result.isQualityDefect()
                 || result.isEquipmentFault() || result.isBottleneck()
                 || result.isSequenceError();
+    }
+
+    private static boolean isNonNormalRiskLevel(String riskLevel) {
+        return "WARNING".equalsIgnoreCase(riskLevel)
+                || "MEDIUM".equalsIgnoreCase(riskLevel)
+                || "CRITICAL".equalsIgnoreCase(riskLevel)
+                || "HIGH".equalsIgnoreCase(riskLevel);
+    }
+
+    private void transitionFollowingProcesses(
+            String eventId,
+            Long currentEventRowId,
+            Long carMasterId,
+            ProcessCode currentProcessCode,
+            boolean abnormal
+    ) {
+        if (abnormal) {
+            int updatedRows = eventRepository.blockFollowingProcesses(
+                    carMasterId,
+                    followingProcesses(currentProcessCode)
+            );
+            log.info(
+                    "[PROCESS_FLOW] followingProcesses={} block result updatedRows={}",
+                    followingProcesses(currentProcessCode),
+                    updatedRows
+            );
+            return;
+        }
+
+        ProcessCode nextProcess = nextProcess(currentProcessCode);
+        String nextProcessCode = nextProcess == null ? null : nextProcess.name();
+
+        log.info(
+                "[PROCESS_FLOW] releaseNextProcessByCurrentRowId called eventId={}, currentEventRowId={}, carMasterId={}, "
+                        + "currentProcess={}, nextProcess={}",
+                eventId,
+                currentEventRowId,
+                carMasterId,
+                currentProcessCode,
+                nextProcessCode
+        );
+
+        int updatedRows = eventRepository.releaseNextProcessByCurrentRowId(currentEventRowId);
+
+        log.info(
+                "[PROCESS_FLOW] releaseNextProcessByCurrentRowId result eventId={}, currentEventRowId={}, updatedRows={}",
+                eventId,
+                currentEventRowId,
+                updatedRows
+        );
+    }
+
+    private ProcessCode nextProcess(ProcessCode currentProcessCode) {
+        return switch (currentProcessCode) {
+            case PRESS -> ProcessCode.BODY;
+            case BODY -> ProcessCode.PAINT;
+            case PAINT -> ProcessCode.ASSEMBLY;
+            case ASSEMBLY -> null;
+        };
+    }
+
+    private List<ProcessCode> followingProcesses(ProcessCode currentProcessCode) {
+        return switch (currentProcessCode) {
+            case PRESS -> List.of(ProcessCode.BODY, ProcessCode.PAINT, ProcessCode.ASSEMBLY);
+            case BODY -> List.of(ProcessCode.PAINT, ProcessCode.ASSEMBLY);
+            case PAINT -> List.of(ProcessCode.ASSEMBLY);
+            case ASSEMBLY -> List.of();
+        };
     }
 }

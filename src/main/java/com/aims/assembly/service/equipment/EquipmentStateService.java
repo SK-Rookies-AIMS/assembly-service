@@ -1,6 +1,8 @@
 package com.aims.assembly.service.equipment;
 
 import com.aims.assembly.domain.equipment.Equipment;
+import com.aims.assembly.domain.enums.EquipmentHealthStatus;
+import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.kafka.model.EquipmentStatusEvent;
 import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.repository.equipment.EquipmentRepository;
@@ -46,6 +48,43 @@ public class EquipmentStateService {
                 "RECOVERY-" + UUID.randomUUID(), changedAt, "RECOVERED", "NORMAL", 0, 0);
         eventPublisher.publishEvent(new EquipmentStateCommittedEvent(event));
         return event;
+    }
+
+    @Transactional("sampleTransactionManager")
+    public void applyStatusEvent(EquipmentStatusEvent event) {
+        Equipment equipment = equipmentRepository.findById(event.equipmentId())
+                .or(() -> equipmentRepository.findByEquipmentCode(event.equipmentCode()))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Equipment not found: id=" + event.equipmentId()
+                                + ", code=" + event.equipmentCode()));
+        equipment.applyStatus(
+                operationStatus(event.operationStatus()),
+                healthStatus(event.healthStatus()),
+                event.eventTime() == null ? LocalDateTime.now() : event.eventTime(),
+                event.reason()
+        );
+    }
+
+    private EquipmentOperationStatus operationStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return EquipmentOperationStatus.RUNNING;
+        }
+        return switch (status.toUpperCase()) {
+            case "ERROR", "DOWN", "FAILURE", "CRITICAL" -> EquipmentOperationStatus.FAULT;
+            default -> EquipmentOperationStatus.valueOf(status.toUpperCase());
+        };
+    }
+
+    private EquipmentHealthStatus healthStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return EquipmentHealthStatus.NORMAL;
+        }
+        return switch (status.toUpperCase()) {
+            case "FAULT", "ERROR", "STOPPED", "DOWN", "FAILURE", "CRITICAL" ->
+                    EquipmentHealthStatus.CRITICAL;
+            case "WARNING" -> EquipmentHealthStatus.WARNING;
+            default -> EquipmentHealthStatus.NORMAL;
+        };
     }
 
     private EquipmentStatusEvent statusEvent(

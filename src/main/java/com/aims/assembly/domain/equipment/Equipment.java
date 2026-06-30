@@ -70,11 +70,14 @@ public class Equipment {
     private LocalDateTime updatedAt;
 
     public void markFault(LocalDateTime faultTime, String reason, boolean stopRequired) {
-        this.healthStatus = EquipmentHealthStatus.ABNORMAL;
         if (stopRequired) {
+            this.healthStatus = EquipmentHealthStatus.CRITICAL;
             this.currentStatus = EquipmentOperationStatus.FAULT;
         } else if (this.currentStatus == EquipmentOperationStatus.RUNNING) {
+            this.healthStatus = EquipmentHealthStatus.WARNING;
             this.currentStatus = EquipmentOperationStatus.WARNING;
+        } else {
+            this.healthStatus = EquipmentHealthStatus.WARNING;
         }
         this.lastFaultTime = faultTime;
         this.reason = reason;
@@ -84,6 +87,22 @@ public class Equipment {
         this.healthStatus = EquipmentHealthStatus.NORMAL;
         this.currentStatus = EquipmentOperationStatus.RUNNING;
         this.lastRecoveredTime = recoveredTime;
+        this.reason = reason;
+    }
+
+    public void applyStatus(
+            EquipmentOperationStatus operationStatus,
+            EquipmentHealthStatus healthStatus,
+            LocalDateTime changedAt,
+            String reason
+    ) {
+        this.currentStatus = operationStatus;
+        this.healthStatus = healthStatus;
+        if (healthStatus == EquipmentHealthStatus.NORMAL) {
+            this.lastRecoveredTime = changedAt;
+        } else {
+            this.lastFaultTime = changedAt;
+        }
         this.reason = reason;
     }
 }

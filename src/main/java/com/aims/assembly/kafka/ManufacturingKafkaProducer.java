@@ -96,10 +96,17 @@ public class ManufacturingKafkaProducer {
     public CompletableFuture<KafkaPublishResult> sendEquipment(EquipmentStatusEvent event) {
         return send(
                 kafkaProperties.getTopics().getEquipment().getName(),
-                requiredLongKey(event.equipmentId(), "equipmentId", event.eventId()),
+                equipmentMessageKey(event),
                 event.eventId(),
                 event
         );
+    }
+
+    private String equipmentMessageKey(EquipmentStatusEvent event) {
+        if (event.equipmentId() != null) {
+            return String.valueOf(event.equipmentId());
+        }
+        return requiredTextKey(event.equipmentCode(), "equipmentCode", event.eventId());
     }
 
     private CompletableFuture<KafkaPublishResult> send(

@@ -18,7 +18,7 @@ class EquipmentTest {
         equipment.markFault(faultAt, "vibration threshold", true);
 
         assertThat(equipment.getCurrentStatus()).isEqualTo(EquipmentOperationStatus.FAULT);
-        assertThat(equipment.getHealthStatus()).isEqualTo(EquipmentHealthStatus.ABNORMAL);
+        assertThat(equipment.getHealthStatus()).isEqualTo(EquipmentHealthStatus.CRITICAL);
         assertThat(equipment.getLastFaultTime()).isEqualTo(faultAt);
         assertThat(equipment.getReason()).isEqualTo("vibration threshold");
 
@@ -27,5 +27,20 @@ class EquipmentTest {
         assertThat(equipment.getCurrentStatus()).isEqualTo(EquipmentOperationStatus.RUNNING);
         assertThat(equipment.getHealthStatus()).isEqualTo(EquipmentHealthStatus.NORMAL);
         assertThat(equipment.getLastRecoveredTime()).isEqualTo(recoveredAt);
+    }
+
+    @Test
+    void nonStoppingFaultMarksHealthWarning() {
+        Equipment equipment = Equipment.builder()
+                .currentStatus(EquipmentOperationStatus.RUNNING)
+                .healthStatus(EquipmentHealthStatus.NORMAL).build();
+        LocalDateTime faultAt = LocalDateTime.of(2026, 6, 22, 10, 0);
+
+        equipment.markFault(faultAt, "temperature threshold", false);
+
+        assertThat(equipment.getCurrentStatus()).isEqualTo(EquipmentOperationStatus.WARNING);
+        assertThat(equipment.getHealthStatus()).isEqualTo(EquipmentHealthStatus.WARNING);
+        assertThat(equipment.getLastFaultTime()).isEqualTo(faultAt);
+        assertThat(equipment.getReason()).isEqualTo("temperature threshold");
     }
 }
