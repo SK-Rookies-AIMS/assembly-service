@@ -28,6 +28,62 @@ import static org.mockito.Mockito.*;
 class ManufacturingKafkaConsumerTest {
 
     @Test
+    void normalizesOffsetDateTimesForLocalDateTimeMessageModels() {
+        String payload = """
+                {"eventTime":"2026-06-30T15:31:53.009548+09:00",
+                 "analyzedAt":"2026-06-30T15:31:53.009548+09:00",
+                 "createdAt":"2026-06-30T06:31:53Z",
+                 "status":"WARNING"}
+                """;
+
+        assertThat(ManufacturingKafkaConsumer.normalizeOffsetDateTimes(payload))
+                .contains("\"eventTime\":\"2026-06-30T15:31:53.009548\"")
+                .contains("\"analyzedAt\":\"2026-06-30T15:31:53.009548\"")
+                .contains("\"createdAt\":\"2026-06-30T06:31:53\"")
+                .contains("\"status\":\"WARNING\"");
+    }
+
+    @Test
+    void warningEquipmentStatusDoesNotBlockReadyEvents() {
+        ObjectMapper objectMapper = mock(ObjectMapper.class);
+        ManufacturingEventAnalyzer analyzer = mock(ManufacturingEventAnalyzer.class);
+        ManufacturingProcessRouter processRouter = mock(ManufacturingProcessRouter.class);
+        ManufacturingKafkaProducer producer = mock(ManufacturingKafkaProducer.class);
+        KafkaMessageTraceStore traceStore = mock(KafkaMessageTraceStore.class);
+        ManufacturingRawEventParser parser = mock(ManufacturingRawEventParser.class);
+        EquipmentStateService equipmentStateService = mock(EquipmentStateService.class);
+        ManufacturingEventJsonRepository eventRepository = mock(ManufacturingEventJsonRepository.class);
+        ManufacturingAnalysisResultService analysisResultService =
+                mock(ManufacturingAnalysisResultService.class);
+        ManufacturingKafkaConsumer consumer = new ManufacturingKafkaConsumer(
+                objectMapper,
+                analyzer,
+                processRouter,
+                producer,
+                traceStore,
+                parser,
+                equipmentStateService,
+                eventRepository,
+                analysisResultService
+        );
+        EquipmentStatusEvent event = new EquipmentStatusEvent(
+                "EQEVT-1", "EVT-1", LocalDateTime.of(2026, 6, 30, 15, 0),
+                null, null, ProcessCode.PRESS, "EQ-PRESS-1", null,
+                "HYDRAULIC_PRESS", "WARNING", "WARNING", 60.0, 0.0,
+                10L, "FAULT", "warning threshold"
+        );
+        when(objectMapper.readValue("equipment-json", EquipmentStatusEvent.class)).thenReturn(event);
+
+        consumer.consumeEquipment(
+                new ConsumerRecord<>("factory.equipment.status", 0, 0L, "10", "equipment-json")
+        );
+
+        verify(equipmentStateService).applyStatusEvent(event);
+        verify(eventRepository, never()).blockReadyEvents(any(), any());
+        verify(eventRepository, never()).restoreBlockedEvents(any(), any());
+    }
+
+    @Test
     void rawEquipmentAbnormalPublishesEquipmentStatusAndAlertTopics() {
         ObjectMapper objectMapper = mock(ObjectMapper.class);
         ManufacturingEventAnalyzer analyzer = mock(ManufacturingEventAnalyzer.class);
@@ -39,6 +95,7 @@ class ManufacturingKafkaConsumerTest {
         ManufacturingEventJsonRepository eventRepository = mock(ManufacturingEventJsonRepository.class);
         ManufacturingAnalysisResultService analysisResultService =
                 mock(ManufacturingAnalysisResultService.class);
+
         ManufacturingKafkaConsumer consumer = new ManufacturingKafkaConsumer(
                 objectMapper,
                 analyzer,
@@ -115,6 +172,7 @@ class ManufacturingKafkaConsumerTest {
         ManufacturingEventJsonRepository eventRepository = new ManufacturingEventJsonRepository(jdbc);
         ManufacturingAnalysisResultService analysisResultService =
                 mock(ManufacturingAnalysisResultService.class);
+
         ManufacturingKafkaConsumer consumer = new ManufacturingKafkaConsumer(
                 objectMapper,
                 analyzer,
@@ -175,6 +233,7 @@ class ManufacturingKafkaConsumerTest {
         ManufacturingEventJsonRepository eventRepository = new ManufacturingEventJsonRepository(jdbc);
         ManufacturingAnalysisResultService analysisResultService =
                 mock(ManufacturingAnalysisResultService.class);
+
         ManufacturingKafkaConsumer consumer = new ManufacturingKafkaConsumer(
                 objectMapper,
                 analyzer,

@@ -31,10 +31,10 @@ public record ManufacturingAnalysisEvent(
         Recommendation recommendation
 ) {
     public record RiskScores(
-            double overallRiskScore,
-            double bottleneckRisk,
-            double defectTransferRisk,
-            double equipmentRisk,
+            Double overallRiskScore,
+            Double bottleneckRisk,
+            Double defectTransferRisk,
+            Double equipmentRisk,
             ProcessRisk processRisk
     ) {
     }

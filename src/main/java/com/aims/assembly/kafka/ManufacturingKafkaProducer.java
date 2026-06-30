@@ -1,12 +1,12 @@
 package com.aims.assembly.kafka;
 
+import com.aims.assembly.common.status.KafkaErrorStatus;
+import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.kafka.model.EquipmentStatusEvent;
 import com.aims.assembly.kafka.model.KafkaPublishResult;
 import com.aims.assembly.kafka.model.ManufacturingAlertEvent;
 import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
-import com.aims.assembly.common.status.KafkaErrorStatus;
-import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.properties.KafkaCustomProperties;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository.StoredManufacturingEvent;
 import lombok.RequiredArgsConstructor;
@@ -18,13 +18,13 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * 제조 파이프라인 토픽별 메시지 발행.
+ * 메시지 직렬화, key 선택, broker 응답 메타데이터 반환을 담당한다.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
-/**
- * 제조 파이프라인 토픽별 메시지 발행.
- * 메시지 직렬화, key 선택, broker 저장 메타데이터 반환 담당.
- */
 public class ManufacturingKafkaProducer {
 
     private final KafkaTemplate<String, String> kafkaTemplate;
@@ -37,17 +37,13 @@ public class ManufacturingKafkaProducer {
             LocalDateTime eventTime
     ) {
         ManufacturingRawEvent payload = withPublishedEventTime(event.payload(), eventTime);
-        // Route metadata comes from table columns; eventJson remains the immutable JSON column.
         return send(
-                // 원천 제조 이벤트 토픽 선택
                 kafkaProperties.getTopics().getRaw().getName(),
                 requiredLongKey(payload.carMasterId(), "carMasterId", payload.eventId()),
-                // 전체 파이프라인 추적용 eventId
                 payload.eventId(),
                 payload
         );
     }
-
 
     private ManufacturingRawEvent withPublishedEventTime(
             ManufacturingRawEvent event,
@@ -69,12 +65,9 @@ public class ManufacturingKafkaProducer {
     }
 
     public CompletableFuture<KafkaPublishResult> sendAnalysis(ManufacturingAnalysisEvent event) {
-        String key = analysisMessageKey(event);
-
-        // 분석 결과 토픽 발행
         return send(
                 kafkaProperties.getTopics().getAnalysis().getName(),
-                key,
+                analysisMessageKey(event),
                 event.eventId(),
                 event
         );
@@ -115,7 +108,6 @@ public class ManufacturingKafkaProducer {
             String eventId,
             Object payload
     ) {
-        // 문자열 payload는 원문 유지, 객체 payload는 JSON 직렬화
         String message;
         try {
             message = payload instanceof String text
@@ -129,7 +121,6 @@ public class ManufacturingKafkaProducer {
             );
         }
 
-        // 비동기 Kafka 발행 및 broker 저장 결과 대기
         try {
             return kafkaTemplate.send(topic, key, message)
                 .handle((result, exception) -> {
@@ -142,7 +133,6 @@ public class ManufacturingKafkaProducer {
                         );
                     }
 
-                    // 현재 Pod의 개발·진단용 발행 이력 기록
                     traceStore.recordProduced(
                             result.getRecordMetadata().topic(),
                             result.getRecordMetadata().partition(),
@@ -152,7 +142,6 @@ public class ManufacturingKafkaProducer {
                             message
                     );
 
-                    // 실제 broker가 반환한 topic/partition/offset 응답 구성
                     return new KafkaPublishResult(
                             result.getRecordMetadata().topic(),
                             result.getRecordMetadata().partition(),
@@ -174,7 +163,6 @@ public class ManufacturingKafkaProducer {
     }
 
     private Throwable unwrap(Throwable exception) {
-        // CompletableFuture CompletionException 내부 원인 추출
         return exception.getCause() == null ? exception : exception.getCause();
     }
 

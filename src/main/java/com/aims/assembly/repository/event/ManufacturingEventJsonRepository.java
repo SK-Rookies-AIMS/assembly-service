@@ -74,10 +74,10 @@ public class ManufacturingEventJsonRepository {
                 """
                         SELECT %s FROM manufacturing_event_json
                         WHERE dispatch_status = 'READY' AND COALESCE(is_sent, 0) = 0
-                          AND event_time <= ? AND COALESCE(retry_count, 0) < ?
-                        ORDER BY event_time ASC, id ASC LIMIT 1
+                          AND COALESCE(retry_count, 0) < ?
+                        ORDER BY id ASC LIMIT 1
                         """.formatted(SELECT_COLUMNS),
-                rowMapper(), virtualNow, maxRetries
+                rowMapper(), maxRetries
         ).stream().findFirst();
     }
 
@@ -93,13 +93,12 @@ public class ManufacturingEventJsonRepository {
                         FROM manufacturing_event_json
                         WHERE dispatch_status = 'READY'
                           AND COALESCE(is_sent, 0) = 0
-                          AND event_time <= ?
                           AND COALESCE(retry_count, 0) < ?
-                        ORDER BY event_time ASC, id ASC
+                        ORDER BY id ASC
                         LIMIT ?
                         FOR UPDATE SKIP LOCKED
                         """.formatted(SELECT_COLUMNS),
-                rowMapper(), virtualNow, maxRetries, Math.min(Math.max(limit, 1), 1_000)
+                rowMapper(), maxRetries, Math.min(Math.max(limit, 1), 1_000)
         );
     }
 
@@ -120,27 +119,23 @@ public class ManufacturingEventJsonRepository {
                 """
                         SELECT e.id, e.car_master_id, e.process_code,
                                q.current_status,
-                               EXISTS (
+                               e.process_code <> 'PRESS' AND EXISTS (
                                    SELECT 1 FROM manufacturing_event_json previous_abnormal
                                    WHERE previous_abnormal.car_master_id = e.car_master_id
-                                     AND (previous_abnormal.event_time < e.event_time
-                                       OR (previous_abnormal.event_time = e.event_time
-                                           AND previous_abnormal.id < e.id))
+                                     AND previous_abnormal.id < e.id
                                      AND previous_abnormal.analysis_status = 'ABNORMAL'
                                ) AS has_previous_abnormal
                         FROM manufacturing_event_json e
                         LEFT JOIN equipment q ON q.id = e.equipment_id
                         WHERE e.dispatch_status = 'PENDING'
                           AND COALESCE(e.is_sent, 0) = 0
-                          AND e.event_time <= ?
-                          AND NOT EXISTS (
+                          AND (e.process_code = 'PRESS' OR NOT EXISTS (
                               SELECT 1 FROM manufacturing_event_json previous
                               WHERE previous.car_master_id = e.car_master_id
-                                AND (previous.event_time < e.event_time
-                                  OR (previous.event_time = e.event_time AND previous.id < e.id))
+                                AND previous.id < e.id
                                 AND previous.analysis_status = 'NOT_ANALYZED'
-                          )
-                        ORDER BY e.event_time ASC, e.id ASC
+                          ))
+                        ORDER BY e.id ASC
                         LIMIT ?
                         FOR UPDATE SKIP LOCKED
                         """,
@@ -150,14 +145,21 @@ public class ManufacturingEventJsonRepository {
                         ProcessCode.valueOf(rs.getString("process_code")),
                         rs.getString("current_status"),
                         rs.getBoolean("has_previous_abnormal")),
-                virtualNow, Math.min(Math.max(limit, 1), 1_000)
+                Math.min(Math.max(limit, 1), 1_000)
         );
         int updated = 0;
         for (PendingActivation candidate : candidates) {
-            boolean faulted = "FAULT".equals(candidate.operationStatus())
+            boolean blocked = "FAULT".equals(candidate.operationStatus())
                     || "STOPPED".equals(candidate.operationStatus())
-                    || candidate.hasPreviousAbnormal()
-                    || !hasRequiredPreviousProcessCompleted(candidate);
+                    || candidate.hasPreviousAbnormal();
+            DispatchStatus nextStatus;
+            if (blocked) {
+                nextStatus = DispatchStatus.BLOCKED;
+            } else if (hasRequiredPreviousProcessCompleted(candidate)) {
+                nextStatus = DispatchStatus.READY;
+            } else {
+                continue;
+            }
             updated += jdbcTemplate.update(
                     """
                             UPDATE manufacturing_event_json
@@ -165,7 +167,7 @@ public class ManufacturingEventJsonRepository {
                             WHERE id = ? AND dispatch_status = 'PENDING'
                               AND COALESCE(is_sent, 0) = 0
                             """,
-                    faulted ? DispatchStatus.BLOCKED.name() : DispatchStatus.READY.name(),
+                    nextStatus.name(),
                     candidate.id()
             );
         }

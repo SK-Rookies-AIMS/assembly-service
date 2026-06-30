@@ -216,7 +216,7 @@ public class ManufacturingEventAnalyzer {
                 analysis.equipmentType(),
                 "CRITICAL".equals(analysis.riskLevel()) ? "STOPPED" : "RUNNING",
                 analysis.riskLevel(),
-                analysis.riskScores().overallRiskScore(),
+                overallRiskScore(analysis),
                 analysis.operationRate()
         );
     }
@@ -263,7 +263,7 @@ public class ManufacturingEventAnalyzer {
                 alertTitle(analysis),
                 analysis.equipmentCode() + " 설비의 제조 공정 위험이 감지되었습니다. (processRisk 기반)",
                 analysis.riskLevel(),
-                analysis.riskScores().overallRiskScore(),
+                overallRiskScore(analysis),
                 "OPEN",
                 true,
                 analysis.reason().detailReasons(),
@@ -313,11 +313,18 @@ public class ManufacturingEventAnalyzer {
         // PRD 발행 조건: WARNING/CRITICAL 또는 개별 이상 플래그 발생
         ManufacturingAnalysisEvent.AnalysisResult result = analysis.analysisResult();
         return !"LOW".equals(analysis.riskLevel())
-                || analysis.riskScores().overallRiskScore() >= 80
+                || overallRiskScore(analysis) >= 80
                 || result.isEquipmentFault()
                 || result.isQualityDefect()
                 || result.isBottleneck()
                 || result.isSequenceError();
+    }
+
+    private double overallRiskScore(ManufacturingAnalysisEvent analysis) {
+        if (analysis.riskScores() == null || analysis.riskScores().overallRiskScore() == null) {
+            return 0.0;
+        }
+        return analysis.riskScores().overallRiskScore();
     }
 
     private double calculateProcessRisk(
@@ -562,17 +569,17 @@ public class ManufacturingEventAnalyzer {
             if (overallRisk >= 80) {
                 return switch (processCode) {
                     case PRESS -> "프레스 공정 위험이 감지되었습니다.";
-                    case BODY -> "바디 공정 위험이 감지되었습니다.";
-                    case PAINT -> "페인트 공정 위험이 감지되었습니다.";
-                    case ASSEMBLY -> "조립 공정 위험이 감지되었습니다.";
+                    case BODY -> "차체 공정 위험이 감지되었습니다.";
+                    case PAINT -> "도장 공정 위험이 감지되었습니다.";
+                    case ASSEMBLY -> "의장 공정 위험이 감지되었습니다.";
                 };
             }
             if (overallRisk >= 60) {
                 return switch (processCode) {
                     case PRESS -> "프레스 공정 위험 경보가 발생했습니다.";
-                    case BODY -> "바디 공정 위험 경보가 발생했습니다.";
-                    case PAINT -> "페인트 공정 위험 경보가 발생했습니다.";
-                    case ASSEMBLY -> "조립 공정 위험 경보가 발생했습니다.";
+                    case BODY -> "차체 공정 위험 경보가 발생했습니다.";
+                    case PAINT -> "도장 공정 위험 경보가 발생했습니다.";
+                    case ASSEMBLY -> "의장 공정 위험 경보가 발생했습니다.";
                 };
             }
         }

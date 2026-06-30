@@ -370,7 +370,7 @@ Analysis 이벤트는 기본적으로 `equipmentCode`를 사용합니다. `DEFEC
 
 ```sql
 WHERE COALESCE(is_sent, 0) = 0
-ORDER BY event_time ASC, id ASC
+ORDER BY id ASC
 LIMIT :batchSize
 ```
 
