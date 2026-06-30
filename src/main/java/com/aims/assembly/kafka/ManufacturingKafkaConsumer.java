@@ -155,25 +155,7 @@ public class ManufacturingKafkaConsumer {
         producer.sendAnalysis(analyzer.analyzeDefectTransfer(event)).join();
     }
 
-    @KafkaListener(
-            topics = "${app.kafka.topics.analysis.name}",
-            groupId = "equipment-consumer-group",
-            concurrency = "2",
-            autoStartup = "${app.kafka.listeners-enabled:true}"
-    )
-    public void consumeAnalysisForEquipment(ConsumerRecord<String, String> record) {
-        // 공정 분석 결과 역직렬화
-        ManufacturingAnalysisEvent analysis =
-                readMessage(record, ManufacturingAnalysisEvent.class);
 
-        // Equipment Consumer Group 수신 이력 기록
-        traceStore.recordConsumed(record, "equipment-consumer-group", analysis.eventId());
-
-        // Product/process defects do not mutate equipment state.
-        if (analysis.analysisResult().isEquipmentFault()) {
-            equipmentStateService.markFault(analysis);
-        }
-    }
 
     @KafkaListener(
             topics = "${app.kafka.topics.analysis.name}",
@@ -214,9 +196,9 @@ public class ManufacturingKafkaConsumer {
             eventRepository.blockReadyEvents(event.equipmentId(), event.equipmentCode());
         }
         log.info(
-                "Equipment event received: equipment={}, health={}, risk={}, partition={}",
+                "Equipment event received: equipment={}, status={}, risk={}, partition={}",
                 event.equipmentCode(),
-                event.healthStatus(),
+                event.operationStatus(),
                 event.riskLevel(),
                 record.partition()
         );

@@ -1,6 +1,5 @@
 package com.aims.assembly.domain.equipment;
 
-import com.aims.assembly.domain.enums.EquipmentHealthStatus;
 import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.domain.enums.EquipmentType;
 import com.aims.assembly.domain.enums.ProcessCode;
@@ -48,10 +47,6 @@ public class Equipment {
     @Column(name = "current_status")
     private EquipmentOperationStatus currentStatus;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "health_status")
-    private EquipmentHealthStatus healthStatus;
-
     @Column(name = "last_fault_time")
     private LocalDateTime lastFaultTime;
 
@@ -69,36 +64,13 @@ public class Equipment {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    public void markFault(LocalDateTime faultTime, String reason, boolean stopRequired) {
-        if (stopRequired) {
-            this.healthStatus = EquipmentHealthStatus.CRITICAL;
-            this.currentStatus = EquipmentOperationStatus.FAULT;
-        } else if (this.currentStatus == EquipmentOperationStatus.RUNNING) {
-            this.healthStatus = EquipmentHealthStatus.WARNING;
-            this.currentStatus = EquipmentOperationStatus.WARNING;
-        } else {
-            this.healthStatus = EquipmentHealthStatus.WARNING;
-        }
-        this.lastFaultTime = faultTime;
-        this.reason = reason;
-    }
-
-    public void recover(LocalDateTime recoveredTime, String reason) {
-        this.healthStatus = EquipmentHealthStatus.NORMAL;
-        this.currentStatus = EquipmentOperationStatus.RUNNING;
-        this.lastRecoveredTime = recoveredTime;
-        this.reason = reason;
-    }
-
     public void applyStatus(
             EquipmentOperationStatus operationStatus,
-            EquipmentHealthStatus healthStatus,
             LocalDateTime changedAt,
             String reason
     ) {
         this.currentStatus = operationStatus;
-        this.healthStatus = healthStatus;
-        if (healthStatus == EquipmentHealthStatus.NORMAL) {
+        if (operationStatus == EquipmentOperationStatus.RUNNING) {
             this.lastRecoveredTime = changedAt;
         } else {
             this.lastFaultTime = changedAt;

@@ -58,7 +58,7 @@ class ManufacturingKafkaConsumerTest {
         ManufacturingAnalysisEvent analysis = normalAnalysis(raw);
         EquipmentStatusEvent equipmentEvent = new EquipmentStatusEvent(
                 "EQEVT-1", raw.eventId(), raw.eventTime(), null, null, raw.processCode(),
-                raw.equipmentCode(), null, raw.equipmentType(), "FAULT", "CRITICAL",
+                raw.equipmentCode(), null, raw.equipmentType(), "FAULT",
                 "CRITICAL", 100.0, 0.0, raw.equipmentId(), "FAULT", "error"
         );
         ManufacturingAlertEvent alert = new ManufacturingAlertEvent(
@@ -85,7 +85,7 @@ class ManufacturingKafkaConsumerTest {
         verify(producer).sendAlert(alert);
         verify(analysisResultService).save(raw, analysis);
         verify(eventRepository).markAnalysisCompleted(raw.eventId(), false);
-        verify(eventRepository).releaseNextProcess(raw.carMasterId(), ProcessCode.PAINT.name());
+        verify(eventRepository).releaseNextProcessByCurrentRowId(null);
         verify(eventRepository, never()).blockFollowingProcesses(any(), anyList());
     }
 

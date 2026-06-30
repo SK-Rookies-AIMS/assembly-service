@@ -1,6 +1,5 @@
 package com.aims.assembly.domain.equipment;
 
-import com.aims.assembly.domain.enums.EquipmentHealthStatus;
 import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import org.junit.jupiter.api.Test;
 
@@ -10,36 +9,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class EquipmentTest {
     @Test
-    void faultAndRecoveryUpdateLatestStateTimesAndReason() {
+    void applyStatusUpdatesLatestStateTimesAndReason() {
         Equipment equipment = Equipment.builder()
-                .currentStatus(EquipmentOperationStatus.RUNNING)
-                .healthStatus(EquipmentHealthStatus.NORMAL).build();
+                .currentStatus(EquipmentOperationStatus.RUNNING).build();
         LocalDateTime faultAt = LocalDateTime.of(2026, 6, 22, 10, 0);
-        equipment.markFault(faultAt, "vibration threshold", true);
+        
+        equipment.applyStatus(EquipmentOperationStatus.FAULT, faultAt, "vibration threshold");
 
         assertThat(equipment.getCurrentStatus()).isEqualTo(EquipmentOperationStatus.FAULT);
-        assertThat(equipment.getHealthStatus()).isEqualTo(EquipmentHealthStatus.CRITICAL);
         assertThat(equipment.getLastFaultTime()).isEqualTo(faultAt);
         assertThat(equipment.getReason()).isEqualTo("vibration threshold");
 
         LocalDateTime recoveredAt = faultAt.plusHours(1);
-        equipment.recover(recoveredAt, "inspection complete");
+        equipment.applyStatus(EquipmentOperationStatus.RUNNING, recoveredAt, "inspection complete");
         assertThat(equipment.getCurrentStatus()).isEqualTo(EquipmentOperationStatus.RUNNING);
-        assertThat(equipment.getHealthStatus()).isEqualTo(EquipmentHealthStatus.NORMAL);
         assertThat(equipment.getLastRecoveredTime()).isEqualTo(recoveredAt);
     }
 
     @Test
-    void nonStoppingFaultMarksHealthWarning() {
+    void applyWarningStatusUpdatesLastFaultTime() {
         Equipment equipment = Equipment.builder()
-                .currentStatus(EquipmentOperationStatus.RUNNING)
-                .healthStatus(EquipmentHealthStatus.NORMAL).build();
+                .currentStatus(EquipmentOperationStatus.RUNNING).build();
         LocalDateTime faultAt = LocalDateTime.of(2026, 6, 22, 10, 0);
 
-        equipment.markFault(faultAt, "temperature threshold", false);
+        equipment.applyStatus(EquipmentOperationStatus.WARNING, faultAt, "temperature threshold");
 
         assertThat(equipment.getCurrentStatus()).isEqualTo(EquipmentOperationStatus.WARNING);
-        assertThat(equipment.getHealthStatus()).isEqualTo(EquipmentHealthStatus.WARNING);
         assertThat(equipment.getLastFaultTime()).isEqualTo(faultAt);
         assertThat(equipment.getReason()).isEqualTo("temperature threshold");
     }

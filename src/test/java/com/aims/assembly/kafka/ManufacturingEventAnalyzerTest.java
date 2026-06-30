@@ -54,9 +54,9 @@ class ManufacturingEventAnalyzerTest {
     }
 
     @Test
-    void classifiesErrorOperationStatusAsEquipmentFault() {
+    void classifiesFaultOperationStatusAsEquipmentFault() {
         ManufacturingRawEvent raw = raw(ProcessCode.PRESS, Map.of(
-                "equipmentStatus", Map.of("operationStatus", "ERROR")));
+                "equipmentStatus", Map.of("operationStatus", "FAULT")));
 
         assertThat(analyzer.analyze(raw).analysisResult().isEquipmentFault()).isTrue();
     }
@@ -335,19 +335,12 @@ class ManufacturingEventAnalyzerTest {
             assertThat(analyzer.isEquipmentAbnormal(raw)).isTrue();
         }
 
-        @Test
-        @DisplayName("5c. equipmentStatus=ERROR → isEquipmentFault=true")
-        void equipmentStatusErrorTriggersFault() {
-            ManufacturingRawEvent raw = rawWithEquipmentStatus(ProcessCode.PRESS, "ERROR");
 
-            assertThat(analyzer.analyze(raw).analysisResult().isEquipmentFault()).isTrue();
-            assertThat(analyzer.isEquipmentAbnormal(raw)).isTrue();
-        }
 
         @Test
-        @DisplayName("5d. equipmentStatus=DOWN → isEquipmentFault=true")
-        void equipmentStatusDownTriggersFault() {
-            ManufacturingRawEvent raw = rawWithEquipmentStatus(ProcessCode.PRESS, "DOWN");
+        @DisplayName("5d. equipmentStatus=WARNING → isEquipmentFault=true")
+        void equipmentStatusWarningTriggersFault() {
+            ManufacturingRawEvent raw = rawWithEquipmentStatus(ProcessCode.PRESS, "WARNING");
 
             assertThat(analyzer.analyze(raw).analysisResult().isEquipmentFault()).isTrue();
             assertThat(analyzer.isEquipmentAbnormal(raw)).isTrue();
@@ -423,7 +416,7 @@ class ManufacturingEventAnalyzerTest {
             assertThat(alert.alertType()).isEqualTo("EQUIPMENT_ABNORMAL");
             assertThat(alert.riskLevel()).isEqualTo("CRITICAL");
             assertThat(analyzer.toEquipmentStatusEvent(raw).operationStatus()).isEqualTo("FAULT");
-            assertThat(analyzer.toEquipmentStatusEvent(raw).healthStatus()).isEqualTo("CRITICAL");
+            assertThat(analyzer.toEquipmentStatusEvent(raw).riskLevel()).isEqualTo("CRITICAL");
         }
 
         @Test
