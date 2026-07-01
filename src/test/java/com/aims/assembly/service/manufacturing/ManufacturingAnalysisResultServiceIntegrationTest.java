@@ -13,9 +13,14 @@ import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.ManufacturingAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
+import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.annotation.Commit;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -27,7 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "app.kafka.bootstrap-servers=localhost:9092",
         "app.kafka.security-protocol=PLAINTEXT",
-        "app.kafka.listeners-enabled=false"
+        "app.kafka.listeners-enabled=false",
+        "app.kafka.scheduler.enabled=false"
 })
 @Transactional
 class ManufacturingAnalysisResultServiceIntegrationTest {
@@ -49,6 +55,16 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
 
     @Autowired
     private AssemblyAnalysisResultRepository assemblyRepository;
+
+    @Autowired
+    private ManufacturingEventJsonRepository eventRepository;
+
+    @Autowired
+    @Qualifier("mainJdbcTemplate")
+    private JdbcTemplate mainJdbcTemplate;
+
+    @Autowired
+    private EntityManager entityManager;
 
     @Test
     void pressDetailMappingTest() {
@@ -263,6 +279,160 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
         assertThat(detail.getSequenceErrorCount()).isEqualTo(1);
         assertThat(detail.getMissingPartCount()).isEqualTo(1);
         assertThat(detail.getFasteningErrorCount()).isEqualTo(1);
+    }
+
+    @Test
+    void assemblyWrappedEventJsonDetailMappingTest() {
+        String eventId = "EVT-TEST-ASSEMBLY-WRAPPED-INTEG";
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, eventId, Map.of(
+                "eventJson", Map.of(
+                        "processData", Map.of(
+                                "assembly", Map.of(
+                                        "expectedSequence", "P03>B02>PA01>A02",
+                                        "actualSequence", "P03>PA01>B02>A02",
+                                        "sequenceErrorCount", 1,
+                                        "missingPartCount", 1,
+                                        "fasteningErrorCount", 1
+                                )
+                        )
+                )
+        ));
+        ManufacturingAnalysisEvent analysis = analysisEvent(raw);
+
+        service.save(raw, analysis);
+
+        ManufacturingAnalysisResult savedResult = resultRepository.findAll().stream()
+                .filter(r -> eventId.equals(r.getEventId()))
+                .findFirst()
+                .orElseThrow();
+
+        AssemblyAnalysisResult detail = assemblyRepository.findById(savedResult.getId()).orElseThrow();
+        assertThat(detail.getExpectedSequence()).isEqualTo("P03>B02>PA01>A02");
+        assertThat(detail.getActualSequence()).isEqualTo("P03>PA01>B02>A02");
+        assertThat(detail.getSequenceErrorCount()).isEqualTo(1);
+        assertThat(detail.getMissingPartCount()).isEqualTo(1);
+        assertThat(detail.getFasteningErrorCount()).isEqualTo(1);
+    }
+
+    @Test
+    void assemblyDetailMappingFromStoredKafkaRawEventJsonTest() {
+        String eventId = "EVT-20260601-000400";
+        ManufacturingRawEvent raw = eventRepository.findByEventId(eventId)
+                .orElseThrow()
+                .payload();
+        ManufacturingRawEvent publishedRaw = withEventTime(raw, LocalDateTime.of(2026, 6, 1, 23, 50, 51));
+        ManufacturingAnalysisEvent analysis = analysisEvent(publishedRaw);
+
+        Object processData = publishedRaw.eventJson().get("processData");
+        assertThat(processData).isInstanceOf(Map.class);
+        Object assembly = ((Map<?, ?>) processData).get("assembly");
+        assertThat(assembly).isInstanceOf(Map.class);
+        Map<?, ?> assemblyMap = (Map<?, ?>) assembly;
+        assertThat(assemblyMap.get("expectedSequence")).isEqualTo("P03>B02>PA01>A02");
+        assertThat(assemblyMap.get("actualSequence")).isEqualTo("P03>PA01>B02>A02");
+        assertThat(assemblyMap.get("sequenceErrorCount")).isEqualTo(1);
+        assertThat(assemblyMap.get("missingPartCount")).isEqualTo(1);
+        assertThat(assemblyMap.get("fasteningErrorCount")).isEqualTo(1);
+
+        service.save(publishedRaw, analysis);
+
+        ManufacturingAnalysisResult savedResult = resultRepository.findAll().stream()
+                .filter(r -> eventId.equals(r.getEventId()))
+                .findFirst()
+                .orElseThrow();
+
+        AssemblyAnalysisResult detail = assemblyRepository.findById(savedResult.getId()).orElseThrow();
+        assertThat(detail.getExpectedSequence()).isEqualTo("P03>B02>PA01>A02");
+        assertThat(detail.getActualSequence()).isEqualTo("P03>PA01>B02>A02");
+        assertThat(detail.getSequenceErrorCount()).isEqualTo(1);
+        assertThat(detail.getMissingPartCount()).isEqualTo(1);
+        assertThat(detail.getFasteningErrorCount()).isEqualTo(1);
+    }
+
+    @Test
+    @Commit
+    void persistsRequestedColumnsToActualMainDb() {
+        cleanupVerificationRows();
+
+        service.save(rawEvent(ProcessCode.ASSEMBLY, "EVT-INTEG-VERIFY-ASSEMBLY", Map.of(
+                "processData", Map.of("assembly", Map.of(
+                        "expectedSequence", "P02>B01>PA05>A05",
+                        "actualSequence", "P02>B01>PA05>A06",
+                        "sequenceErrorCount", 1,
+                        "missingPartCount", 2,
+                        "fasteningErrorCount", 3
+                ))
+        )), analysisEvent(rawEvent(ProcessCode.ASSEMBLY, "EVT-INTEG-VERIFY-ASSEMBLY", Map.of())));
+        service.save(rawEvent(ProcessCode.PAINT, "EVT-INTEG-VERIFY-PAINT", Map.of(
+                "processData", Map.of("paint", Map.of(
+                        "imagePosition", "LEFT",
+                        "thicknessValue", 116.0
+                ))
+        )), analysisEvent(rawEvent(ProcessCode.PAINT, "EVT-INTEG-VERIFY-PAINT", Map.of())));
+        service.save(rawEvent(ProcessCode.BODY, "EVT-INTEG-VERIFY-BODY", Map.of(
+                "processData", Map.of("body", Map.of(
+                        "robotOperationMode", "AUTO",
+                        "frequencyBands", Map.of("100Hz", 0.2, "200Hz", 0.4)
+                ))
+        )), analysisEvent(rawEvent(ProcessCode.BODY, "EVT-INTEG-VERIFY-BODY", Map.of())));
+        service.save(rawEvent(ProcessCode.PRESS, "EVT-INTEG-VERIFY-PRESS", Map.of(
+                "processData", Map.of("press", Map.of("timestampDelaySec", 3.0))
+        )), analysisEvent(rawEvent(ProcessCode.PRESS, "EVT-INTEG-VERIFY-PRESS", Map.of())));
+
+        entityManager.flush();
+
+        Map<String, Object> assembly = queryDetail("assembly_analysis_result", "EVT-INTEG-VERIFY-ASSEMBLY");
+        assertThat(assembly.get("expected_sequence")).isEqualTo("P02>B01>PA05>A05");
+        assertThat(assembly.get("actual_sequence")).isEqualTo("P02>B01>PA05>A06");
+        assertThat(((Number) assembly.get("sequence_error_count")).intValue()).isEqualTo(1);
+        assertThat(((Number) assembly.get("missing_part_count")).intValue()).isEqualTo(2);
+        assertThat(((Number) assembly.get("fastening_error_count")).intValue()).isEqualTo(3);
+
+        Map<String, Object> paint = queryDetail("paint_analysis_result", "EVT-INTEG-VERIFY-PAINT");
+        assertThat(paint.get("image_position")).isEqualTo("LEFT");
+        assertThat(((Number) paint.get("thickness_value")).doubleValue()).isEqualTo(116.0);
+
+        Map<String, Object> body = queryDetail("body_analysis_result", "EVT-INTEG-VERIFY-BODY");
+        assertThat(body.get("robot_operation_mode")).isEqualTo("AUTO");
+        assertThat(body.get("frequency_bands_json").toString()).contains("100Hz").contains("200Hz");
+
+        Map<String, Object> press = queryDetail("press_analysis_result", "EVT-INTEG-VERIFY-PRESS");
+        assertThat(((Number) press.get("timestamp_delay_sec")).doubleValue()).isEqualTo(3.0);
+    }
+
+    private void cleanupVerificationRows() {
+        String eventIdPredicate = "SELECT id FROM manufacturing_analysis_result WHERE event_id LIKE 'EVT-INTEG-VERIFY-%'";
+        mainJdbcTemplate.update("DELETE FROM assembly_analysis_result WHERE analysis_result_id IN (" + eventIdPredicate + ")");
+        mainJdbcTemplate.update("DELETE FROM paint_analysis_result WHERE analysis_result_id IN (" + eventIdPredicate + ")");
+        mainJdbcTemplate.update("DELETE FROM body_analysis_result WHERE analysis_result_id IN (" + eventIdPredicate + ")");
+        mainJdbcTemplate.update("DELETE FROM press_analysis_result WHERE analysis_result_id IN (" + eventIdPredicate + ")");
+        mainJdbcTemplate.update("DELETE FROM manufacturing_analysis_result WHERE event_id LIKE 'EVT-INTEG-VERIFY-%'");
+    }
+
+    private Map<String, Object> queryDetail(String tableName, String eventId) {
+        return mainJdbcTemplate.queryForMap("""
+                SELECT detail.*
+                FROM %s detail
+                JOIN manufacturing_analysis_result result
+                  ON result.id = detail.analysis_result_id
+                WHERE result.event_id = ?
+                """.formatted(tableName), eventId);
+    }
+
+    private ManufacturingRawEvent withEventTime(ManufacturingRawEvent raw, LocalDateTime eventTime) {
+        return new ManufacturingRawEvent(
+                raw.id(),
+                raw.eventId(),
+                eventTime,
+                raw.carMasterId(),
+                raw.equipmentId(),
+                raw.processCode(),
+                raw.equipmentCode(),
+                raw.equipmentType(),
+                raw.equipmentStatus(),
+                raw.eventType(),
+                raw.eventJson()
+        );
     }
 
     private ManufacturingRawEvent rawEvent(ProcessCode processCode, String eventId, Map<String, Object> json) {

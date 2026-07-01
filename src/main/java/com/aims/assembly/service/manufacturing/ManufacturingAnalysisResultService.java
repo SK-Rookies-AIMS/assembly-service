@@ -15,6 +15,7 @@ import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.ManufacturingAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -82,7 +83,26 @@ public class ManufacturingAnalysisResultService {
         );
 
         // 공정별 결과 저장 (같은 트랜잭션)
-        saveProcessSpecificResult(raw, savedResult);
+        // 상세 테이블은 가능하면 sampleDB에 저장된 원천 event_json을 기준으로 저장한다.
+        // raw.eventJson()은 Kafka/analysis 흐름에 따라 일부 payload만 들어올 수 있으므로 fallback으로만 사용한다.
+        Map<String, Object> detailEventJson = stored != null && stored.payload() != null
+                ? stored.payload().eventJson()
+                : raw.eventJson();
+
+        ProcessCode detailProcessCode = stored != null && stored.payload() != null
+                ? stored.payload().processCode()
+                : raw.processCode();
+
+        log.info("[DETAIL_SAVE][SOURCE] resultId={}, eventId={}, source={}, processCode={}, hasProcessData={}, hasProcessMetrics={}, hasSensor={}",
+                savedResult.getId(),
+                savedResult.getEventId(),
+                stored != null && stored.payload() != null ? "stored" : "raw",
+                detailProcessCode,
+                value(detailEventJson, "processData") != null,
+                value(detailEventJson, "processMetrics") != null,
+                value(detailEventJson, "sensor") != null);
+
+        saveProcessSpecificResult(detailProcessCode, detailEventJson, savedResult);
     }
 
     /**
@@ -90,16 +110,37 @@ public class ManufacturingAnalysisResultService {
      * ManufacturingAnalysisResult 저장 후 동일 트랜잭션에서 실행된다.
      */
     private void saveProcessSpecificResult(
-            ManufacturingRawEvent raw,
+            ProcessCode processCode,
+            Map<String, Object> eventJson,
             ManufacturingAnalysisResult savedResult
     ) {
-        Map<String, Object> json = raw.eventJson();
-        switch (raw.processCode()) {
+        if (processCode == null) {
+            log.warn("Skip process specific result save because processCode is null. analysisResultId={}",
+                    savedResult.getId());
+            return;
+        }
+
+        Object json = eventPayload(eventJson);
+
+        if (json == null) {
+            log.warn("Skip process specific result save because eventJson is null. analysisResultId={}, processCode={}",
+                    savedResult.getId(), processCode);
+            return;
+        }
+
+        switch (processCode) {
             case PRESS -> {
                 Boolean countIncrease = bool(json, "processData", "press", "countIncreaseYn");
                 Double targetCycleTime = doubleVal(json, "processData", "press", "targetCycleTimeSec");
                 Double actualCycleTime = doubleVal(json, "processMetrics", "cycleTimeSec");
                 Double timestampDelaySec = doubleVal(json, "processData", "press", "timestampDelaySec");
+                log.info("[DETAIL_SAVE][PRESS] resultId={}, eventId={}, timestampDelaySec={}, targetCycleTime={}, actualCycleTime={}, cycleTimeGap={}",
+                        savedResult.getId(),
+                        savedResult.getEventId(),
+                        timestampDelaySec,
+                        targetCycleTime,
+                        actualCycleTime,
+                        actualCycleTime != null && targetCycleTime != null ? actualCycleTime - targetCycleTime : null);
                 pressRepository.save(
                         PressAnalysisResult.builder()
                                 .analysisResult(savedResult)
@@ -128,6 +169,12 @@ public class ManufacturingAnalysisResultService {
                         log.error("Failed to serialize frequencyBands", e);
                     }
                 }
+                log.info("[DETAIL_SAVE][BODY] resultId={}, eventId={}, robotOperationMode={}, frequencyBandsObj={}, frequencyBandsJson={}",
+                        savedResult.getId(),
+                        savedResult.getEventId(),
+                        robotOperationMode,
+                        frequencyBandsObj,
+                        frequencyBandsJson);
 
                 bodyRepository.save(
                         BodyAnalysisResult.builder()
@@ -148,6 +195,11 @@ public class ManufacturingAnalysisResultService {
                 String visionLabel = text(json, "processData", "paint", "visionLabel");
                 String imagePosition = text(json, "processData", "paint", "imagePosition");
                 Double thicknessValue = doubleVal(json, "processData", "paint", "thicknessValue");
+                log.info("[DETAIL_SAVE][PAINT] resultId={}, eventId={}, imagePosition={}, thicknessValue={}",
+                        savedResult.getId(),
+                        savedResult.getEventId(),
+                        imagePosition,
+                        thicknessValue);
 
                 paintRepository.save(
                         PaintAnalysisResult.builder()
@@ -167,6 +219,14 @@ public class ManufacturingAnalysisResultService {
                 Integer sequenceErrorCount = intVal(json, "processData", "assembly", "sequenceErrorCount");
                 Integer missingPartCount = intVal(json, "processData", "assembly", "missingPartCount");
                 Integer fasteningErrorCount = intVal(json, "processData", "assembly", "fasteningErrorCount");
+                log.info("[DETAIL_SAVE][ASSEMBLY] resultId={}, eventId={}, expectedSequence={}, actualSequence={}, sequenceErrorCount={}, missingPartCount={}, fasteningErrorCount={}",
+                        savedResult.getId(),
+                        savedResult.getEventId(),
+                        expectedSequence,
+                        actualSequence,
+                        sequenceErrorCount,
+                        missingPartCount,
+                        fasteningErrorCount);
 
                 assemblyRepository.save(
                         AssemblyAnalysisResult.builder()
@@ -182,12 +242,12 @@ public class ManufacturingAnalysisResultService {
         }
     }
 
-    private Double doubleVal(Map<String, Object> json, String... path) {
+    private Double doubleVal(Object json, String... path) {
         Object val = value(json, path);
         return val instanceof Number n ? n.doubleValue() : null;
     }
 
-    private Integer intVal(Map<String, Object> json, String... path) {
+    private Integer intVal(Object json, String... path) {
         Object val = value(json, path);
         return val instanceof Number n ? n.intValue() : null;
     }
@@ -197,22 +257,102 @@ public class ManufacturingAnalysisResultService {
         return camel.replaceAll("([a-z])([A-Z])", "$1_$2").toLowerCase();
     }
 
-    @SuppressWarnings("unchecked")
-    private Object value(Map<String, Object> source, String... path) {
+    private Object eventPayload(Map<String, Object> source) {
+        if (source == null) {
+            return null;
+        }
+        if (value(source, "processData") != null || value(source, "processMetrics") != null
+                || value(source, "sensor") != null) {
+            return source;
+        }
+        Object wrapped = directValue(source, "eventJson");
+        if (wrapped == null) {
+            wrapped = directValue(source, "event_json");
+        }
+        return wrapped == null ? source : wrapped;
+    }
+
+    private Object value(Object source, String... path) {
         Object current = source;
         for (String key : path) {
-            if (!(current instanceof Map<?, ?> map)) return null;
-            Map<String, Object> currentMap = (Map<String, Object>) map;
-            Object next = currentMap.get(key);
-            if (next == null) {
-                String snakeKey = camelToSnake(key);
-                if (snakeKey != null && !snakeKey.equals(key)) {
-                    next = currentMap.get(snakeKey);
-                }
-            }
+            Object next = directValue(current, key);
             current = next;
         }
         return current;
+    }
+
+    private Object directValue(Object source, String key) {
+        if (source instanceof Map<?, ?> map) {
+            Object direct = map.get(key);
+            if (direct != null) {
+                return direct;
+            }
+            String snakeKey = camelToSnake(key);
+            if (snakeKey != null && !snakeKey.equals(key)) {
+                Object snake = map.get(snakeKey);
+                if (snake != null) {
+                    return snake;
+                }
+            }
+            String camelKey = snakeToCamel(key);
+            if (camelKey != null && !camelKey.equals(key)) {
+                return map.get(camelKey);
+            }
+            return null;
+        }
+        if (source instanceof JsonNode node) {
+            JsonNode child = node.get(key);
+            if (child == null) {
+                String snakeKey = camelToSnake(key);
+                if (snakeKey != null && !snakeKey.equals(key)) {
+                    child = node.get(snakeKey);
+                }
+            }
+            if (child == null) {
+                String camelKey = snakeToCamel(key);
+                if (camelKey != null && !camelKey.equals(key)) {
+                    child = node.get(camelKey);
+                }
+            }
+            return jsonNodeValue(child);
+        }
+        return null;
+    }
+
+    private String snakeToCamel(String snake) {
+        if (snake == null || !snake.contains("_")) return snake;
+        StringBuilder result = new StringBuilder();
+        boolean upperNext = false;
+        for (char ch : snake.toCharArray()) {
+            if (ch == '_') {
+                upperNext = true;
+            } else if (upperNext) {
+                result.append(Character.toUpperCase(ch));
+                upperNext = false;
+            } else {
+                result.append(ch);
+            }
+        }
+        return result.toString();
+    }
+
+    private Object jsonNodeValue(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) {
+            return null;
+        }
+        if (node.isObject() || node.isArray()) {
+            return node;
+        }
+        if (node.isBoolean()) {
+            return node.booleanValue();
+        }
+        if (node.isInt() || node.isLong()) {
+            return node.longValue();
+        }
+        if (node.isNumber()) {
+            return node.doubleValue();
+        }
+        return node.asText();
     }
 
     private String abnormalType(ManufacturingAnalysisEvent.AnalysisResult result, double riskScore) {
@@ -238,17 +378,17 @@ public class ManufacturingAnalysisResultService {
         return Severity.NORMAL;
     }
 
-    private double number(Map<String, Object> source, String... path) {
+    private double number(Object source, String... path) {
         Object val = value(source, path);
         return val instanceof Number n ? n.doubleValue() : 0.0;
     }
 
-    private boolean bool(Map<String, Object> source, String... path) {
+    private boolean bool(Object source, String... path) {
         Object val = value(source, path);
         return val instanceof Boolean b && b;
     }
 
-    private String text(Map<String, Object> source, String... path) {
+    private String text(Object source, String... path) {
         Object val = value(source, path);
         return val == null ? null : val.toString();
     }
