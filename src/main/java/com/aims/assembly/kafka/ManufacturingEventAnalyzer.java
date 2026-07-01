@@ -351,10 +351,13 @@ public class ManufacturingEventAnalyzer {
                 double rmsAmpere = number(event.eventJson(), "sensor", "current", "rmsAmpere");
                 double targetCycleTimeSec = targetCycleTime(event);
                 double cycleOverTargetSec = Math.max(0, cycleTimeSec - targetCycleTimeSec);
-                double score = clamp(stationDelaySec * 6
-                        + cycleOverTargetSec * 5
-                        + rmsAmpere * 8
-                        + (countIncrease ? 0 : 35));
+                
+                double score = clamp(
+                        Math.min(40.0, stationDelaySec * 4.0)
+                        + Math.min(35.0, cycleOverTargetSec * 3.0)
+                        + Math.min(20.0, Math.max(0.0, rmsAmpere - 1.5) * 8.0)
+                        + (countIncrease ? 0.0 : 20.0)
+                );
                 yield new ProcessComponent(
                         score,
                         Map.of(
@@ -366,7 +369,7 @@ public class ManufacturingEventAnalyzer {
                                 "rmsAmpere", rmsAmpere,
                                 "countIncreaseYn", countIncrease
                         ),
-                        "clamp(stationDelaySec * 6 + max(0, cycleTimeSec - targetCycleTimeSec) * 5 + rmsAmpere * 8 + (countIncreaseYn ? 0 : 35))"
+                        "min(40, stationDelaySec * 4) + min(35, max(0, cycleTimeSec - targetCycleTimeSec) * 3) + min(20, max(0, rmsAmpere - 1.5) * 8) + (countIncreaseYn ? 0 : 20)"
                 );
             }
             case BODY -> {
@@ -382,17 +385,23 @@ public class ManufacturingEventAnalyzer {
                         "robotArmVibration",
                         "frequencyHz"
                 );
-                double frequencyOver100 = Math.max(0, frequency - 100);
-                double score = clamp(robotScore * 70 + frequencyOver100 * 0.08);
+                String robotMotionStatus = text(event.eventJson(), "processData", "body", "robotMotionStatus");
+                boolean isMotionAbnormal = "ABNORMAL".equalsIgnoreCase(robotMotionStatus);
+                
+                double score = clamp(
+                        Math.min(50.0, robotScore * 40.0)
+                        + Math.min(30.0, Math.max(0.0, frequency - 100.0) * 0.04)
+                        + (isMotionAbnormal ? 30.0 : 0.0)
+                );
                 yield new ProcessComponent(
                         score,
                         Map.of(
                                 "processCode", event.processCode().name(),
                                 "robotVibrationScore", robotScore,
                                 "frequencyHz", frequency,
-                                "frequencyOver100Hz", frequencyOver100
+                                "robotMotionStatus", String.valueOf(robotMotionStatus)
                         ),
-                        "clamp(robotVibrationScore * 70 + max(0, frequencyHz - 100) * 0.08)"
+                        "min(50, robotVibrationScore * 40) + min(30, max(0, frequencyHz - 100) * 0.04) + (robotMotionStatus is abnormal ? 30 : 0)"
                 );
             }
             case PAINT -> {
@@ -402,10 +411,12 @@ public class ManufacturingEventAnalyzer {
                         number(event.eventJson(), "processData", "paint", "thermalStdTemp");
                 double surfaceQuality =
                         number(event.eventJson(), "processData", "paint", "surfaceQualityScore");
-                double qualityUnder80 = Math.max(0, 80 - surfaceQuality);
-                double score = clamp(defectScore * 65
-                        + thermalDeviation * 5
-                        + qualityUnder80);
+                
+                double score = clamp(
+                        Math.min(45.0, defectScore * 35.0)
+                        + Math.min(25.0, thermalDeviation * 3.0)
+                        + Math.min(30.0, Math.max(0.0, 90.0 - surfaceQuality))
+                );
                 yield new ProcessComponent(
                         score,
                         Map.of(
@@ -413,10 +424,9 @@ public class ManufacturingEventAnalyzer {
                                 "defectScore", defectScore,
                                 "thermalStdTemp", thermalDeviation,
                                 "surfaceQualityScore", surfaceQuality,
-                                "surfaceQualityUnder80", qualityUnder80,
                                 "visionLabel", String.valueOf(text(event.eventJson(), "processData", "paint", "visionLabel"))
                         ),
-                        "clamp(defectScore * 65 + thermalStdTemp * 5 + max(0, 80 - surfaceQualityScore))"
+                        "min(45, defectScore * 35) + min(25, thermalStdTemp * 3) + min(30, max(0, 90 - surfaceQualityScore))"
                 );
             }
             case ASSEMBLY -> {
@@ -438,7 +448,11 @@ public class ManufacturingEventAnalyzer {
                         "assembly",
                         "fasteningErrorCount"
                 );
-                double score = clamp(sequenceErrors * 35 + missingParts * 40 + fasteningErrors * 30);
+                double score = clamp(
+                        Math.min(45.0, sequenceErrors * 40.0)
+                        + Math.min(35.0, missingParts * 30.0)
+                        + Math.min(20.0, fasteningErrors * 20.0)
+                );
                 yield new ProcessComponent(
                         score,
                         Map.of(
@@ -447,7 +461,7 @@ public class ManufacturingEventAnalyzer {
                                 "missingPartCount", missingParts,
                                 "fasteningErrorCount", fasteningErrors
                         ),
-                        "clamp(sequenceErrorCount * 35 + missingPartCount * 40 + fasteningErrorCount * 30)"
+                        "min(45, sequenceErrorCount * 40) + min(35, missingPartCount * 30) + min(20, fasteningErrorCount * 20)"
                 );
             }
         };

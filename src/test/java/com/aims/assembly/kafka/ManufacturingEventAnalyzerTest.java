@@ -149,9 +149,9 @@ class ManufacturingEventAnalyzerTest {
 
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
             double overallRiskScore = result.riskScores().overallRiskScore();
-            // processRisk = sequenceErrorCount * 35 = 35
-            // riskScore should equal processRisk = 35
-            assertThat(overallRiskScore).isEqualTo(35.0);
+            // processRisk = min(45, sequenceErrorCount * 40) = 40.0
+            // riskScore should equal processRisk = 40.0
+            assertThat(overallRiskScore).isEqualTo(40.0);
         }
 
         @Test
@@ -190,11 +190,11 @@ class ManufacturingEventAnalyzerTest {
         @Test
         @DisplayName("3. processRisk >= 60이면 severity WARNING, isAbnormal = true")
         void processRiskAbove60TriggersWarning() {
-            // ASSEMBLY: sequenceErrorCount * 35 + missingPartCount * 40 = 2*35=70 → >= 60
+            // ASSEMBLY: min(40, 2*25) + min(35, 1*30) = 40 + 30 = 70 >= 60
             ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
                     "processData", Map.of("assembly", Map.of(
                             "sequenceErrorCount", 2,
-                            "missingPartCount", 0,
+                            "missingPartCount", 1,
                             "fasteningErrorCount", 0
                     ))
             ));
@@ -210,7 +210,7 @@ class ManufacturingEventAnalyzerTest {
         @Test
         @DisplayName("4. processRisk >= 80이면 severity CRITICAL, isAbnormal = true")
         void processRiskAbove80TriggersCritical() {
-            // ASSEMBLY: 2*35 + 1*40 + 1*30 = 175 → clamp → 100 >= 80
+            // ASSEMBLY: min(40, 2*25) + min(35, 1*30) + min(25, 1*20) = 40 + 30 + 20 = 90 >= 80
             ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
                     "processData", Map.of("assembly", Map.of(
                             "sequenceErrorCount", 2,
@@ -234,11 +234,14 @@ class ManufacturingEventAnalyzerTest {
                             "cycleTimeSec", 100.0,
                             "stationDelaySec", 100.0
                     ),
+                    "sensor", Map.of(
+                            "current", Map.of("rmsAmpere", 5.0)
+                    ),
                     "processData", Map.of(
                             "press", Map.of(
                                     "targetCycleTimeSec", 40.0,
                                     "countIncreaseYn", false
-                            )
+                             )
                     )
             ));
 
@@ -260,6 +263,9 @@ class ManufacturingEventAnalyzerTest {
                     "processMetrics", Map.of(
                             "cycleTimeSec", 100.0,
                             "stationDelaySec", 100.0
+                    ),
+                    "sensor", Map.of(
+                            "current", Map.of("rmsAmpere", 5.0)
                     ),
                     "processData", Map.of(
                             "press", Map.of(
@@ -377,7 +383,7 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
                     "processData", Map.of("assembly", Map.of(
                             "sequenceErrorCount", 2,
-                            "missingPartCount", 0,
+                            "missingPartCount", 1,
                             "fasteningErrorCount", 0
                     ))
             ));
@@ -393,9 +399,9 @@ class ManufacturingEventAnalyzerTest {
         void criticalRiskScoreTriggersAlert() {
             ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
                     "processData", Map.of("assembly", Map.of(
-                            "sequenceErrorCount", 3,
+                            "sequenceErrorCount", 2,
                             "missingPartCount", 1,
-                            "fasteningErrorCount", 0
+                            "fasteningErrorCount", 1
                     ))
             ));
 
@@ -454,6 +460,96 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingEventAnalyzer.AnalysisDetail detail = analyzer.analyzeDetail(raw);
 
             assertThat(detail.overallFormula()).isEqualTo("riskScore = processRisk");
+        }
+
+        @Test
+        @DisplayName("10. PRESS 중간 점수대 검증 - 100점으로 포화되지 않는지 확인")
+        void pressIntermediateRiskScore() {
+            ManufacturingRawEvent raw = raw(ProcessCode.PRESS, Map.of(
+                    "processMetrics", Map.of(
+                            "cycleTimeSec", 45.0,
+                            "stationDelaySec", 5.0
+                    ),
+                    "sensor", Map.of(
+                            "current", Map.of("rmsAmpere", 2.5)
+                    ),
+                    "processData", Map.of(
+                            "press", Map.of(
+                                    "targetCycleTimeSec", 40.0,
+                                    "countIncreaseYn", true
+                            )
+                    )
+            ));
+
+            ManufacturingAnalysisEvent result = analyzer.analyze(raw);
+            double score = result.riskScores().overallRiskScore();
+
+            // min(40, 5 * 4) + min(35, (45-40)*3) + min(20, (2.5-1.5)*8) + 0 = 20 + 15 + 8.0 + 0 = 43.0
+            assertThat(score).isEqualTo(43.0);
+            assertThat(score).isBetween(20.0, 80.0);
+        }
+
+        @Test
+        @DisplayName("11. ASSEMBLY 단일 경미/중대 이상 점수 검증")
+        void assemblySingleAnomalyRiskScore() {
+            ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
+                    "processData", Map.of(
+                            "assembly", Map.of(
+                                    "sequenceErrorCount", 1,
+                                    "missingPartCount", 0,
+                                    "fasteningErrorCount", 0
+                            )
+                    )
+            ));
+
+            ManufacturingAnalysisEvent result = analyzer.analyze(raw);
+            double score = result.riskScores().overallRiskScore();
+
+            // min(45, 1 * 40) = 40.0
+            assertThat(score).isEqualTo(40.0);
+            assertThat(score).isBetween(20.0, 60.0);
+        }
+
+        @Test
+        @DisplayName("12. ASSEMBLY 복합 이상 점수 검증 (90점)")
+        void assemblyCompoundAnomalyRiskScore() {
+            ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
+                    "processData", Map.of(
+                            "assembly", Map.of(
+                                    "sequenceErrorCount", 1,
+                                    "missingPartCount", 1,
+                                    "fasteningErrorCount", 1
+                            )
+                    )
+            ));
+
+            ManufacturingAnalysisEvent result = analyzer.analyze(raw);
+            double score = result.riskScores().overallRiskScore();
+
+            // min(45, 40) + min(35, 30) + min(20, 20) = 40 + 30 + 20 = 90.0
+            assertThat(score).isEqualTo(90.0);
+            assertThat(result.riskLevel()).isEqualTo("CRITICAL");
+        }
+
+        @Test
+        @DisplayName("13. ASSEMBLY 심각 이상 점수 검증 (100점)")
+        void assemblySevereAnomalyRiskScore() {
+            ManufacturingRawEvent raw = raw(ProcessCode.ASSEMBLY, Map.of(
+                    "processData", Map.of(
+                            "assembly", Map.of(
+                                    "sequenceErrorCount", 3,
+                                    "missingPartCount", 2,
+                                    "fasteningErrorCount", 2
+                            )
+                    )
+            ));
+
+            ManufacturingAnalysisEvent result = analyzer.analyze(raw);
+            double score = result.riskScores().overallRiskScore();
+
+            // min(45, 120) + min(35, 60) + min(20, 40) = 45 + 35 + 20 = 100.0
+            assertThat(score).isEqualTo(100.0);
+            assertThat(result.riskLevel()).isEqualTo("CRITICAL");
         }
 
     }
