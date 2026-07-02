@@ -43,6 +43,11 @@ public class SecurityConfig {
                         .requestMatchers("/api/process/press/**").permitAll()
                         .requestMatchers("/api/process/body/**").permitAll()
 //                        .requestMatchers("/api/kafka/manufacturing/**").permitAll()
+                        .requestMatchers("/api/process/paint").permitAll()
+                        .requestMatchers("/api/process/paint/dates").permitAll()
+                        .requestMatchers("/api/process/assembly").permitAll()
+                        .requestMatchers("/api/process/assembly/dates").permitAll()
+                        .requestMatchers("/api/kafka/manufacturing/**").permitAll()
                         .requestMatchers(
                                 "/",
                                 "/api/process/health",
