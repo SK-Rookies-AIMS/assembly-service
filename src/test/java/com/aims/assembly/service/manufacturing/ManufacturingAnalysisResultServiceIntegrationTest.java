@@ -397,6 +397,9 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
         assertThat(body.get("frequency_bands_json").toString()).contains("100Hz").contains("200Hz");
 
         Map<String, Object> press = queryDetail("press_analysis_result", "EVT-INTEG-VERIFY-PRESS");
+        assertThat(((Number) press.get("target_cycle_time_sec")).doubleValue()).isEqualTo(40.0);
+        assertThat(((Number) press.get("actual_cycle_time_sec")).doubleValue()).isEqualTo(43.0);
+        assertThat(((Number) press.get("cycle_time_gap_sec")).doubleValue()).isEqualTo(3.0);
         assertThat(((Number) press.get("timestamp_delay_sec")).doubleValue()).isEqualTo(3.0);
     }
 

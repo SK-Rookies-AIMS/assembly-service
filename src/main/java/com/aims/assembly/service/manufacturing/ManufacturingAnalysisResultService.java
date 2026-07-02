@@ -38,6 +38,9 @@ public class ManufacturingAnalysisResultService {
     private final AssemblyAnalysisResultRepository assemblyRepository;
     private final ManufacturingEventAnalyzer analyzer;
     private final ObjectMapper objectMapper;
+    private final com.fasterxml.jackson.databind.ObjectMapper jacksonObjectMapper =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+    private static final double DEFAULT_PRESS_TARGET_CYCLE_TIME_SEC = 40.0;
 
     /**
      * 분석 결과를 MainDB manufacturing_analysis_result 에 저장하고,
@@ -131,24 +134,50 @@ public class ManufacturingAnalysisResultService {
         switch (processCode) {
             case PRESS -> {
                 Boolean countIncrease = bool(json, "processData", "press", "countIncreaseYn");
-                Double targetCycleTime = doubleVal(json, "processData", "press", "targetCycleTimeSec");
-                Double actualCycleTime = doubleVal(json, "processMetrics", "cycleTimeSec");
-                Double timestampDelaySec = doubleVal(json, "processData", "press", "timestampDelaySec");
-                log.info("[DETAIL_SAVE][PRESS] resultId={}, eventId={}, timestampDelaySec={}, targetCycleTime={}, actualCycleTime={}, cycleTimeGap={}",
+                Double targetCycleTime = firstDouble(
+                        json,
+                        new String[]{"processData", "press", "targetCycleTimeSec"},
+                        new String[]{"processMetrics", "targetCycleTimeSec"}
+                );
+                if (targetCycleTime == null || targetCycleTime <= 0) {
+                    targetCycleTime = DEFAULT_PRESS_TARGET_CYCLE_TIME_SEC;
+                }
+                Double timestampDelaySec = firstDouble(
+                        json,
+                        new String[]{"processData", "press", "timestampDelaySec"},
+                        new String[]{"processMetrics", "stationDelaySec"}
+                );
+                if (timestampDelaySec == null || timestampDelaySec < 0) {
+                    timestampDelaySec = 0.0;
+                }
+                Double actualCycleTime = firstDouble(
+                        json,
+                        new String[]{"processMetrics", "cycleTimeSec"},
+                        new String[]{"processData", "press", "actualCycleTimeSec"},
+                        new String[]{"processData", "press", "cycleTimeSec"}
+                );
+                if (actualCycleTime == null || actualCycleTime <= 0) {
+                    actualCycleTime = targetCycleTime + timestampDelaySec;
+                }
+                if (actualCycleTime <= 0) {
+                    actualCycleTime = targetCycleTime;
+                }
+                double cycleTimeGapSec = actualCycleTime - targetCycleTime;
+                log.info("[DETAIL_SAVE][PRESS] resultId={}, eventId={}, countIncreaseYn={}, timestampDelaySec={}, targetCycleTime={}, actualCycleTime={}, cycleTimeGap={}",
                         savedResult.getId(),
                         savedResult.getEventId(),
+                        countIncrease,
                         timestampDelaySec,
                         targetCycleTime,
                         actualCycleTime,
-                        actualCycleTime != null && targetCycleTime != null ? actualCycleTime - targetCycleTime : null);
+                        cycleTimeGapSec);
                 pressRepository.save(
                         PressAnalysisResult.builder()
                                 .analysisResult(savedResult)
                                 .countIncreaseYn(countIncrease)
                                 .targetCycleTimeSec(targetCycleTime)
                                 .actualCycleTimeSec(actualCycleTime)
-                                .cycleTimeGapSec(actualCycleTime != null && targetCycleTime != null
-                                        ? actualCycleTime - targetCycleTime : null)
+                                .cycleTimeGapSec(cycleTimeGapSec)
                                 .timestampDelaySec(timestampDelaySec)
                                 .build()
                 );
@@ -247,6 +276,21 @@ public class ManufacturingAnalysisResultService {
         return val instanceof Number n ? n.doubleValue() : null;
     }
 
+    private Double firstDouble(Object json, String[]... paths) {
+        for (String[] path : paths) {
+            Double value = doubleVal(json, path);
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private double firstPositiveDouble(Object json, String[]... paths) {
+        Double value = firstDouble(json, paths);
+        return value != null && value > 0 ? value : 0.0;
+    }
+
     private Integer intVal(Object json, String... path) {
         Object val = value(json, path);
         return val instanceof Number n ? n.intValue() : null;
@@ -269,7 +313,23 @@ public class ManufacturingAnalysisResultService {
         if (wrapped == null) {
             wrapped = directValue(source, "event_json");
         }
+        if (wrapped instanceof String text) {
+            return parseJsonObject(text);
+        }
         return wrapped == null ? source : wrapped;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object parseJsonObject(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            return jacksonObjectMapper.readValue(text, Map.class);
+        } catch (Exception exception) {
+            log.warn("Failed to parse nested eventJson string. length={}", text.length(), exception);
+            return null;
+        }
     }
 
     private Object value(Object source, String... path) {

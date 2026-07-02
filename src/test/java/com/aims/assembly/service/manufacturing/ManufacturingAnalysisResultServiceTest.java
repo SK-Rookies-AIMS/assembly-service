@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -130,6 +131,9 @@ class ManufacturingAnalysisResultServiceTest {
         ArgumentCaptor<PressAnalysisResult> pressCaptor =
                 ArgumentCaptor.forClass(PressAnalysisResult.class);
         verify(pressRepository).save(pressCaptor.capture());
+        assertThat(pressCaptor.getValue().getTargetCycleTimeSec()).isEqualTo(40.0);
+        assertThat(pressCaptor.getValue().getActualCycleTimeSec()).isEqualTo(43.0);
+        assertThat(pressCaptor.getValue().getCycleTimeGapSec()).isEqualTo(3.0);
         assertThat(pressCaptor.getValue().getTimestampDelaySec()).isEqualTo(3.0);
 
         ManufacturingRawEvent body = rawEvent(ProcessCode.BODY, "EVT-BODY", Map.of(
@@ -233,6 +237,39 @@ class ManufacturingAnalysisResultServiceTest {
         assertThat(assemblyCaptor.getValue().getSequenceErrorCount()).isZero();
         assertThat(assemblyCaptor.getValue().getMissingPartCount()).isZero();
         assertThat(assemblyCaptor.getValue().getFasteningErrorCount()).isZero();
+    }
+
+    @Test
+    void pressDetailUnwrapsStringEventJsonAndStoresNonNullNumbers() {
+        ManufacturingRawEvent press = rawEvent(ProcessCode.PRESS, "EVT-PRESS-STRING", Map.of(
+                "eventJson",
+                """
+                {
+                  "processData": {
+                    "press": {
+                      "countIncreaseYn": true,
+                      "targetCycleTimeSec": 12.0,
+                      "timestampDelaySec": 4.2
+                    }
+                  },
+                  "processMetrics": {
+                    "cycleTimeSec": 14.6
+                  }
+                }
+                """
+        ));
+
+        service.save(press, analysisEvent(press));
+
+        ArgumentCaptor<PressAnalysisResult> captor =
+                ArgumentCaptor.forClass(PressAnalysisResult.class);
+        verify(pressRepository).save(captor.capture());
+        PressAnalysisResult detail = captor.getValue();
+        assertThat(detail.getCountIncreaseYn()).isTrue();
+        assertThat(detail.getTargetCycleTimeSec()).isEqualTo(12.0);
+        assertThat(detail.getActualCycleTimeSec()).isEqualTo(14.6);
+        assertThat(detail.getCycleTimeGapSec()).isCloseTo(2.6, within(0.0001));
+        assertThat(detail.getTimestampDelaySec()).isEqualTo(4.2);
     }
 
     private ManufacturingRawEvent rawEvent(ProcessCode processCode, String eventId, Map<String, Object> json) {

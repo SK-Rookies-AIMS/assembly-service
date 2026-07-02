@@ -40,7 +40,8 @@ public class SecurityConfig {
                         // Temporary permitAll for SampleDB source-data API testing until login/JWT integration is connected.
                         .requestMatchers("/api/process/events/**").permitAll()
                         .requestMatchers("/api/process/sample").permitAll()
-                        .requestMatchers("/api/kafka/manufacturing/**").permitAll()
+                        .requestMatchers("/api/process/press/**").permitAll()
+//                        .requestMatchers("/api/kafka/manufacturing/**").permitAll()
                         .requestMatchers(
                                 "/",
                                 "/api/process/health",
