@@ -157,6 +157,15 @@ public class ManufacturingAnalysisResultService {
                         new String[]{"processData", "press", "actualCycleTimeSec"},
                         new String[]{"processData", "press", "cycleTimeSec"}
                 );
+                
+                // Null 체크: processMetrics에서 cycleTimeSec 추출 시도
+                if (actualCycleTime == null) {
+                    Double processMetricsCycleTime = doubleVal(json, "processMetrics", "cycleTimeSec");
+                    if (processMetricsCycleTime != null && processMetricsCycleTime > 0) {
+                        actualCycleTime = processMetricsCycleTime;
+                    }
+                }
+                
                 if (actualCycleTime == null || actualCycleTime <= 0) {
                     actualCycleTime = targetCycleTime + timestampDelaySec;
                 }
@@ -190,6 +199,34 @@ public class ManufacturingAnalysisResultService {
                 String robotOperationMode = text(json, "processData", "body", "robotOperationMode");
                 String robotMotionStatus = text(json, "processData", "body", "robotMotionStatus");
 
+                // robotOperationMode null 체크: processData.body에서도 찾기 시도
+                if (robotOperationMode == null) {
+                    robotOperationMode = text(json, "processData", "body", "robotOperationMode");
+                }
+                // 여전히 null이면 "NORMAL" 설정
+                if (robotOperationMode == null) {
+                    robotOperationMode = "NORMAL";
+                }
+                
+                // robotVibrationScore null 체크: sensor.robotArmVibration에서 다시 시도
+                if (robotVibrationScore == null) {
+                    Double vibrationScoreFromSensor = doubleVal(json, "sensor", "robotArmVibration", "vibrationScore");
+                    if (vibrationScoreFromSensor != null) {
+                        robotVibrationScore = vibrationScoreFromSensor;
+                    } else {
+                        // sensor.vibration에서도 시도
+                        robotVibrationScore = doubleVal(json, "sensor", "vibration", "vibrationScore");
+                    }
+                }
+                
+                // vibrationPeak null 체크: 여러 경로에서 찾기
+                if (vibrationPeak == null) {
+                    vibrationPeak = doubleVal(json, "sensor", "robotArmVibration", "vibrationPeak");
+                    if (vibrationPeak == null) {
+                        vibrationPeak = doubleVal(json, "sensor", "vibration", "vibrationPeak");
+                    }
+                }
+
                 Object frequencyBandsObj = value(json, "processData", "body", "frequencyBands");
                 Map<String, Double> frequencyBands = BodyFrequencyBandSupport.toDoubleMap(frequencyBandsObj);
                 Double frequencyPeakValue = BodyFrequencyBandSupport.resolvePeakValue(
@@ -197,6 +234,12 @@ public class ManufacturingAnalysisResultService {
                         frequencyBands,
                         vibrationPeak
                 );
+                
+                // frequencyPeakValue null 체크: vibrationPeak 직접 사용
+                if (frequencyPeakValue == null && vibrationPeak != null) {
+                    frequencyPeakValue = vibrationPeak;
+                }
+                
                 String frequencyBandsJson = null;
                 if (frequencyBandsObj != null) {
                     try {
@@ -205,11 +248,12 @@ public class ManufacturingAnalysisResultService {
                         log.error("Failed to serialize frequencyBands", e);
                     }
                 }
-                log.info("[DETAIL_SAVE][BODY] resultId={}, eventId={}, robotMotionStatus={}, robotOperationMode={}, frequencyPeakBand={}, frequencyPeakValue={}, frequencyBandsJson={}",
+                log.info("[DETAIL_SAVE][BODY] resultId={}, eventId={}, robotMotionStatus={}, robotOperationMode={}, robotVibrationScore={}, frequencyPeakBand={}, frequencyPeakValue={}, frequencyBandsJson={}",
                         savedResult.getId(),
                         savedResult.getEventId(),
                         robotMotionStatus,
                         robotOperationMode,
+                        robotVibrationScore,
                         frequencyPeakBand,
                         frequencyPeakValue,
                         frequencyBandsJson);
