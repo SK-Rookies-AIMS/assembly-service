@@ -15,9 +15,11 @@ import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.ManufacturingAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
+import com.aims.assembly.service.body.BodyFrequencyBandSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -38,6 +40,9 @@ public class ManufacturingAnalysisResultService {
     private final AssemblyAnalysisResultRepository assemblyRepository;
     private final ManufacturingEventAnalyzer analyzer;
     private final ObjectMapper objectMapper;
+    private final com.fasterxml.jackson.databind.ObjectMapper jacksonObjectMapper =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+    private static final double DEFAULT_PRESS_TARGET_CYCLE_TIME_SEC = 40.0;
 
     /**
      * 분석 결과를 MainDB manufacturing_analysis_result 에 저장하고,
@@ -45,8 +50,11 @@ public class ManufacturingAnalysisResultService {
      *
      * <p>공정별 저장 실패 시 전체 트랜잭션이 롤백된다.
      * consumer 가 재처리하므로 Kafka-DB 최종 일관성이 보장된다.
+     * 
+     * <p>새 분석 결과 저장 시 이상 탐지 대시보드 캐시를 무효화한다.
      */
     @Transactional
+    @CacheEvict(cacheNames = {"press-anomaly-dashboard-v2", "body-anomaly-dashboard-v2"}, allEntries = true)
     public void save(ManufacturingRawEvent raw, ManufacturingAnalysisEvent analysis) {
         var result = analysis.analysisResult();
         LocalDateTime eventTime = raw.eventTime();
@@ -131,36 +139,111 @@ public class ManufacturingAnalysisResultService {
         switch (processCode) {
             case PRESS -> {
                 Boolean countIncrease = bool(json, "processData", "press", "countIncreaseYn");
-                Double targetCycleTime = doubleVal(json, "processData", "press", "targetCycleTimeSec");
-                Double actualCycleTime = doubleVal(json, "processMetrics", "cycleTimeSec");
-                Double timestampDelaySec = doubleVal(json, "processData", "press", "timestampDelaySec");
-                log.info("[DETAIL_SAVE][PRESS] resultId={}, eventId={}, timestampDelaySec={}, targetCycleTime={}, actualCycleTime={}, cycleTimeGap={}",
+                Double targetCycleTime = firstDouble(
+                        json,
+                        new String[]{"processData", "press", "targetCycleTimeSec"},
+                        new String[]{"processMetrics", "targetCycleTimeSec"}
+                );
+                if (targetCycleTime == null || targetCycleTime <= 0) {
+                    targetCycleTime = DEFAULT_PRESS_TARGET_CYCLE_TIME_SEC;
+                }
+                Double timestampDelaySec = firstDouble(
+                        json,
+                        new String[]{"processData", "press", "timestampDelaySec"},
+                        new String[]{"processMetrics", "stationDelaySec"}
+                );
+                if (timestampDelaySec == null || timestampDelaySec < 0) {
+                    timestampDelaySec = 0.0;
+                }
+                Double actualCycleTime = firstDouble(
+                        json,
+                        new String[]{"processMetrics", "cycleTimeSec"},
+                        new String[]{"processData", "press", "actualCycleTimeSec"},
+                        new String[]{"processData", "press", "cycleTimeSec"}
+                );
+                
+                // Null 체크: processMetrics에서 cycleTimeSec 추출 시도
+                if (actualCycleTime == null) {
+                    Double processMetricsCycleTime = doubleVal(json, "processMetrics", "cycleTimeSec");
+                    if (processMetricsCycleTime != null && processMetricsCycleTime > 0) {
+                        actualCycleTime = processMetricsCycleTime;
+                    }
+                }
+                
+                if (actualCycleTime == null || actualCycleTime <= 0) {
+                    actualCycleTime = targetCycleTime + timestampDelaySec;
+                }
+                if (actualCycleTime <= 0) {
+                    actualCycleTime = targetCycleTime;
+                }
+                double cycleTimeGapSec = actualCycleTime - targetCycleTime;
+                log.info("[DETAIL_SAVE][PRESS] resultId={}, eventId={}, countIncreaseYn={}, timestampDelaySec={}, targetCycleTime={}, actualCycleTime={}, cycleTimeGap={}",
                         savedResult.getId(),
                         savedResult.getEventId(),
+                        countIncrease,
                         timestampDelaySec,
                         targetCycleTime,
                         actualCycleTime,
-                        actualCycleTime != null && targetCycleTime != null ? actualCycleTime - targetCycleTime : null);
+                        cycleTimeGapSec);
                 pressRepository.save(
                         PressAnalysisResult.builder()
                                 .analysisResult(savedResult)
                                 .countIncreaseYn(countIncrease)
                                 .targetCycleTimeSec(targetCycleTime)
                                 .actualCycleTimeSec(actualCycleTime)
-                                .cycleTimeGapSec(actualCycleTime != null && targetCycleTime != null
-                                        ? actualCycleTime - targetCycleTime : null)
+                                .cycleTimeGapSec(cycleTimeGapSec)
                                 .timestampDelaySec(timestampDelaySec)
                                 .build()
                 );
             }
             case BODY -> {
                 Double robotVibrationScore = doubleVal(json, "sensor", "robotArmVibration", "vibrationScore");
-                Double frequencyHz = doubleVal(json, "sensor", "robotArmVibration", "frequencyHz");
+                Double vibrationPeak = doubleVal(json, "sensor", "robotArmVibration", "vibrationPeak");
                 String frequencyPeakBand = text(json, "processData", "body", "frequencyPeakBand");
                 String robotOperationMode = text(json, "processData", "body", "robotOperationMode");
                 String robotMotionStatus = text(json, "processData", "body", "robotMotionStatus");
+
+                // robotOperationMode null 체크: processData.body에서도 찾기 시도
+                if (robotOperationMode == null) {
+                    robotOperationMode = text(json, "processData", "body", "robotOperationMode");
+                }
+                // 여전히 null이면 "NORMAL" 설정
+                if (robotOperationMode == null) {
+                    robotOperationMode = "NORMAL";
+                }
                 
+                // robotVibrationScore null 체크: sensor.robotArmVibration에서 다시 시도
+                if (robotVibrationScore == null) {
+                    Double vibrationScoreFromSensor = doubleVal(json, "sensor", "robotArmVibration", "vibrationScore");
+                    if (vibrationScoreFromSensor != null) {
+                        robotVibrationScore = vibrationScoreFromSensor;
+                    } else {
+                        // sensor.vibration에서도 시도
+                        robotVibrationScore = doubleVal(json, "sensor", "vibration", "vibrationScore");
+                    }
+                }
+                
+                // vibrationPeak null 체크: 여러 경로에서 찾기
+                if (vibrationPeak == null) {
+                    vibrationPeak = doubleVal(json, "sensor", "robotArmVibration", "vibrationPeak");
+                    if (vibrationPeak == null) {
+                        vibrationPeak = doubleVal(json, "sensor", "vibration", "vibrationPeak");
+                    }
+                }
+
                 Object frequencyBandsObj = value(json, "processData", "body", "frequencyBands");
+                Map<String, Double> frequencyBands = BodyFrequencyBandSupport.toDoubleMap(frequencyBandsObj);
+                Double frequencyPeakValue = BodyFrequencyBandSupport.resolvePeakValue(
+                        frequencyPeakBand,
+                        frequencyBands,
+                        vibrationPeak
+                );
+                
+                // frequencyPeakValue null 체크: vibrationPeak 직접 사용
+                if (frequencyPeakValue == null && vibrationPeak != null) {
+                    frequencyPeakValue = vibrationPeak;
+                }
+                
                 String frequencyBandsJson = null;
                 if (frequencyBandsObj != null) {
                     try {
@@ -169,11 +252,14 @@ public class ManufacturingAnalysisResultService {
                         log.error("Failed to serialize frequencyBands", e);
                     }
                 }
-                log.info("[DETAIL_SAVE][BODY] resultId={}, eventId={}, robotOperationMode={}, frequencyBandsObj={}, frequencyBandsJson={}",
+                log.info("[DETAIL_SAVE][BODY] resultId={}, eventId={}, robotMotionStatus={}, robotOperationMode={}, robotVibrationScore={}, frequencyPeakBand={}, frequencyPeakValue={}, frequencyBandsJson={}",
                         savedResult.getId(),
                         savedResult.getEventId(),
+                        robotMotionStatus,
                         robotOperationMode,
-                        frequencyBandsObj,
+                        robotVibrationScore,
+                        frequencyPeakBand,
+                        frequencyPeakValue,
                         frequencyBandsJson);
 
                 bodyRepository.save(
@@ -183,7 +269,7 @@ public class ManufacturingAnalysisResultService {
                                 .robotOperationMode(robotOperationMode)
                                 .robotVibrationScore(robotVibrationScore)
                                 .frequencyPeakBand(frequencyPeakBand)
-                                .frequencyPeakValue(frequencyHz)
+                                .frequencyPeakValue(frequencyPeakValue)
                                 .frequencyBandsJson(frequencyBandsJson)
                                 .build()
                 );
@@ -247,6 +333,21 @@ public class ManufacturingAnalysisResultService {
         return val instanceof Number n ? n.doubleValue() : null;
     }
 
+    private Double firstDouble(Object json, String[]... paths) {
+        for (String[] path : paths) {
+            Double value = doubleVal(json, path);
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private double firstPositiveDouble(Object json, String[]... paths) {
+        Double value = firstDouble(json, paths);
+        return value != null && value > 0 ? value : 0.0;
+    }
+
     private Integer intVal(Object json, String... path) {
         Object val = value(json, path);
         return val instanceof Number n ? n.intValue() : null;
@@ -269,7 +370,23 @@ public class ManufacturingAnalysisResultService {
         if (wrapped == null) {
             wrapped = directValue(source, "event_json");
         }
+        if (wrapped instanceof String text) {
+            return parseJsonObject(text);
+        }
         return wrapped == null ? source : wrapped;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object parseJsonObject(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            return jacksonObjectMapper.readValue(text, Map.class);
+        } catch (Exception exception) {
+            log.warn("Failed to parse nested eventJson string. length={}", text.length(), exception);
+            return null;
+        }
     }
 
     private Object value(Object source, String... path) {
