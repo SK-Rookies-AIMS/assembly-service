@@ -17,6 +17,9 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -107,6 +110,66 @@ public class ManufacturingEventJsonRepository {
                 "SELECT " + SELECT_COLUMNS
                         + " FROM manufacturing_event_json ORDER BY event_time ASC, id ASC LIMIT ?",
                 rowMapper(), limit
+        );
+    }
+
+    public List<PressEventTime> findPressEventTimesByJsonEventTimeBetween(
+            LocalDateTime from,
+            LocalDateTime to,
+            int limit
+    ) {
+        int size = Math.max(1, Math.min(limit, 10_000));
+        return findAllPressEventTimes().stream()
+                .filter(event -> event.eventTime() != null)
+                .filter(event -> !event.eventTime().isBefore(from) && !event.eventTime().isAfter(to))
+                .sorted(Comparator.comparing(PressEventTime::eventTime).reversed())
+                .limit(size)
+                .toList();
+    }
+
+    public List<PressEventDateOption> findPressEventDateOptions(int limit) {
+        int size = Math.max(1, Math.min(limit, 365));
+        Map<java.time.LocalDate, PressEventDateOption> byDate = new LinkedHashMap<>();
+        findAllPressEventTimes().stream()
+                .filter(event -> event.eventTime() != null)
+                .sorted(Comparator.comparing(PressEventTime::eventTime).reversed())
+                .forEach(event -> byDate.putIfAbsent(
+                        event.eventTime().toLocalDate(),
+                        new PressEventDateOption(event.eventTime().toLocalDate(), event.eventId())
+                ));
+        return byDate.values().stream().limit(size).toList();
+    }
+
+    public List<StoredManufacturingEvent> findPressEventsByEventIds(List<String> eventIds) {
+        if (eventIds == null || eventIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(eventIds.size(), "?"));
+        return jdbcTemplate.query(
+                """
+                        SELECT %s
+                        FROM manufacturing_event_json
+                        WHERE process_code = 'PRESS'
+                          AND event_id IN (%s)
+                        """.formatted(SELECT_COLUMNS, placeholders),
+                rowMapper(),
+                eventIds.toArray()
+        );
+    }
+
+    private List<PressEventTime> findAllPressEventTimes() {
+        return jdbcTemplate.query(
+                """
+                        SELECT event_id, event_json
+                        FROM manufacturing_event_json
+                        WHERE process_code = 'PRESS'
+                        ORDER BY id DESC
+                        """,
+                (rs, rowNum) -> {
+                    String eventId = rs.getString("event_id");
+                    Map<String, Object> eventJson = parseEventJson(0L, rs.getString("event_json"));
+                    return new PressEventTime(eventId, parseEventJsonEventTime(eventJson));
+                }
         );
     }
 
@@ -387,6 +450,21 @@ public class ManufacturingEventJsonRepository {
         return null;
     }
 
+    private LocalDateTime parseEventJsonEventTime(Map<String, Object> eventJson) {
+        String eventTime = findText(eventJson, "eventTime");
+        if (eventTime == null || eventTime.isBlank()) {
+            eventTime = findText(eventJson, "event_time");
+        }
+        if (eventTime == null || eventTime.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(eventTime);
+        } catch (RuntimeException ignored) {
+            return OffsetDateTime.parse(eventTime).toLocalDateTime();
+        }
+    }
+
     private Long nullableLong(ResultSet rs, String column) throws SQLException {
         long value = rs.getLong(column);
         return rs.wasNull() ? null : value;
@@ -424,6 +502,11 @@ public class ManufacturingEventJsonRepository {
         public String eventId() { return payload.eventId(); }
         public String equipmentCode() { return payload.equipmentCode(); }
     }
+
+    public record PressEventTime(String eventId, LocalDateTime eventTime) {}
+
+    public record PressEventDateOption(java.time.LocalDate date, String sampleEventId) {}
+
     public int releaseNextProcessByEventId(String eventId) {
         return jdbcTemplate.update(
                 """
