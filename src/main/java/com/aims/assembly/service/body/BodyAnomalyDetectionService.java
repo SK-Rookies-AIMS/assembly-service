@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +35,10 @@ public class BodyAnomalyDetectionService {
     private final ManufacturingEventJsonRepository eventJsonRepository;
     private final ObjectMapper objectMapper;
 
+    @Cacheable(
+            cacheNames = "body-anomaly-dashboard",
+            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
+    )
     public BodyAnomalyDetectionResponse findDashboard(
             LocalDate date,
             LocalDateTime from,

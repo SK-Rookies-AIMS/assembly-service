@@ -5,6 +5,7 @@ import com.aims.assembly.dto.press.PressAnomalyDetectionResponse;
 import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +27,10 @@ public class PressAnomalyDetectionService {
     private final PressAnalysisResultRepository repository;
     private final ManufacturingEventJsonRepository eventRepository;
 
+    @Cacheable(
+            cacheNames = "press-anomaly-dashboard",
+            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
+    )
     public PressAnomalyDetectionResponse findDashboard(
             LocalDate date,
             LocalDateTime from,

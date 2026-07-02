@@ -19,6 +19,7 @@ import com.aims.assembly.service.body.BodyFrequencyBandSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -49,8 +50,11 @@ public class ManufacturingAnalysisResultService {
      *
      * <p>공정별 저장 실패 시 전체 트랜잭션이 롤백된다.
      * consumer 가 재처리하므로 Kafka-DB 최종 일관성이 보장된다.
+     * 
+     * <p>새 분석 결과 저장 시 이상 탐지 대시보드 캐시를 무효화한다.
      */
     @Transactional
+    @CacheEvict(cacheNames = {"press-anomaly-dashboard", "body-anomaly-dashboard"}, allEntries = true)
     public void save(ManufacturingRawEvent raw, ManufacturingAnalysisEvent analysis) {
         var result = analysis.analysisResult();
         LocalDateTime eventTime = raw.eventTime();
