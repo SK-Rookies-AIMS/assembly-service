@@ -5,6 +5,7 @@ import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.kafka.model.EquipmentStatusEvent;
 import com.aims.assembly.repository.equipment.EquipmentRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +15,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class EquipmentStateService {
 
     private final EquipmentRepository equipmentRepository;
@@ -33,23 +35,27 @@ public class EquipmentStateService {
 
     @Transactional("sampleTransactionManager")
     public void applyStatusEvent(EquipmentStatusEvent event) {
+        EquipmentOperationStatus operationStatus = EquipmentOperationStatus.from(event.operationStatus())
+                .orElse(null);
+        if (operationStatus == null) {
+            log.warn(
+                    "Skipping equipment status update because operationStatus is invalid: equipmentId={}, equipmentCode={}, operationStatus={}",
+                    event.equipmentId(),
+                    event.equipmentCode(),
+                    event.operationStatus()
+            );
+            return;
+        }
         Equipment equipment = equipmentRepository.findById(event.equipmentId())
                 .or(() -> equipmentRepository.findByEquipmentCode(event.equipmentCode()))
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Equipment not found: id=" + event.equipmentId()
                                 + ", code=" + event.equipmentCode()));
         equipment.applyStatus(
-                operationStatus(event.operationStatus()),
+                operationStatus,
                 event.eventTime() == null ? LocalDateTime.now() : event.eventTime(),
                 event.reason()
         );
-    }
-
-    private EquipmentOperationStatus operationStatus(String status) {
-        if (status == null || status.isBlank()) {
-            return EquipmentOperationStatus.RUNNING;
-        }
-        return EquipmentOperationStatus.valueOf(status.toUpperCase());
     }
 
     private EquipmentStatusEvent statusEvent(

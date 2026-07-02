@@ -72,7 +72,8 @@ public class Equipment {
         this.currentStatus = operationStatus;
         if (operationStatus == EquipmentOperationStatus.RUNNING) {
             this.lastRecoveredTime = changedAt;
-        } else {
+        } else if (operationStatus == EquipmentOperationStatus.STOPPED
+                || operationStatus == EquipmentOperationStatus.FAULT) {
             this.lastFaultTime = changedAt;
         }
         this.reason = reason;

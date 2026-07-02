@@ -1,5 +1,6 @@
 package com.aims.assembly.kafka;
 
+import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.kafka.model.EquipmentStatusEvent;
 import com.aims.assembly.kafka.model.ManufacturingAlertEvent;
@@ -22,8 +23,8 @@ import java.util.UUID;
  * 사용되며, detail API 응답에는 포함되지 않는다.
  *
  * <p>설비 이상 판단 기준:
- * equipmentStatus(envelope) / equipmentStatus.operationStatus / equipmentStatus.healthStatus 가
- * FAULT | STOPPED | ERROR | DOWN 중 하나이거나, eventType 에 해당 키워드가 포함된 경우.
+ * equipmentStatus(envelope) / equipmentStatus.operationStatus 가
+ * WARNING | STOPPED | FAULT 중 하나인 경우.
  * 수치 계산식은 더 이상 equipmentFault 판단에 사용되지 않는다.
  */
 @Component
@@ -119,7 +120,7 @@ public class ManufacturingEventAnalyzer {
                         + vibrationScore * 45
                         + robotVibrationScore * 35
                         + equipmentIdleTimeSec * 1.5
-                        + healthStatusWeight(event)
+                        + operationStatusWeight(event)
         );
 
         // 전류, 일반 진동, 로봇 진동, 열화상 기반 불량 전이 위험도 계산 (다른 팀원 담당 영역 - 유지)
@@ -272,7 +273,7 @@ public class ManufacturingEventAnalyzer {
     }
 
     /**
-     * Case B: 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 감지 시 즉시 발행할 alert 이벤트 생성.
+     * Case B: 설비 이상 상태(WARNING/STOPPED/FAULT) 감지 시 즉시 발행할 alert 이벤트 생성.
      * riskScore 분석 결과와 무관하게 raw 이벤트 수신 직후 발행된다.
      */
     public ManufacturingAlertEvent toEquipmentStatusAlert(ManufacturingRawEvent event) {
@@ -503,18 +504,13 @@ public class ManufacturingEventAnalyzer {
         // 2) event_json 내부 equipmentStatus.operationStatus 확인
         if (isAbnormalStatusValue(text(event.eventJson(), "equipmentStatus", "operationStatus"))) return true;
         // 3) eventType 키워드 기반 확인
-        String eventType = event.eventType();
-        if (eventType != null) {
-            String upper = eventType.toUpperCase();
-            return upper.contains("FAULT") || upper.contains("STOPPED") || upper.contains("WARNING");
-        }
         return false;
     }
 
     private boolean isAbnormalStatusValue(String status) {
-        if (status == null) return false;
-        String upper = status.toUpperCase();
-        return upper.equals("FAULT") || upper.equals("STOPPED") || upper.equals("WARNING");
+        return EquipmentOperationStatus.from(status)
+                .filter(value -> value != EquipmentOperationStatus.RUNNING)
+                .isPresent();
     }
 
     private String equipmentOperationStatus(ManufacturingRawEvent event) {
@@ -522,10 +518,11 @@ public class ManufacturingEventAnalyzer {
         if (status == null || status.isBlank()) {
             status = text(event.eventJson(), "equipmentStatus", "operationStatus");
         }
-        if (status == null || status.isBlank()) {
-            return "FAULT";
-        }
-        return status.toUpperCase();
+        String rawStatus = status;
+        return EquipmentOperationStatus.from(rawStatus)
+                .map(EquipmentOperationStatus::name)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Invalid equipment operationStatus: " + rawStatus));
     }
 
     private String buildEquipmentStatusReason(ManufacturingRawEvent event, boolean isAbnormal) {
@@ -549,7 +546,7 @@ public class ManufacturingEventAnalyzer {
         return sb.toString();
     }
 
-    private double healthStatusWeight(ManufacturingRawEvent event) {
+    private double operationStatusWeight(ManufacturingRawEvent event) {
         String status = text(event.eventJson(), "equipmentStatus", "operationStatus");
         if (status == null) {
             status = event.equipmentStatus();
@@ -574,7 +571,7 @@ public class ManufacturingEventAnalyzer {
             String analysisType
     ) {
         if (equipmentFault) {
-            return "설비 상태값에서 이상(FAULT/STOPPED/ERROR/DOWN)이 감지되었습니다.";
+            return "설비 상태값에서 이상(WARNING/STOPPED/FAULT)이 감지되었습니다.";
         }
         if (sequenceError) {
             return "의장 공정의 작업 순서 오류가 감지되었습니다.";
@@ -617,7 +614,7 @@ public class ManufacturingEventAnalyzer {
 
     private String decisionReason(double processRiskScore, boolean equipmentFault, boolean sequenceError) {
         if (processRiskScore >= 60) return "processRisk >= 60 (riskScore = processRisk)";
-        if (equipmentFault) return "Equipment status is FAULT/STOPPED/ERROR/DOWN";
+        if (equipmentFault) return "Equipment status is WARNING/STOPPED/FAULT";
         if (sequenceError) return "ASSEMBLY sequenceErrorCount > 0";
         return "processRisk < 60 and no abnormal detail flag";
     }

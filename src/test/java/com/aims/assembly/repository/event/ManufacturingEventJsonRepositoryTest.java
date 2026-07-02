@@ -30,9 +30,9 @@ class ManufacturingEventJsonRepositoryTest {
         jdbc.execute("""
                 CREATE TABLE equipment (
                   id BIGINT PRIMARY KEY, equipment_code VARCHAR(50), equipment_type VARCHAR(50),
-                  health_status VARCHAR(20), current_status VARCHAR(20))
+                  current_status VARCHAR(20) NOT NULL DEFAULT 'RUNNING')
                 """);
-        jdbc.update("INSERT INTO equipment VALUES (10, 'EQ-1', 'HYDRAULIC_PRESS', 'NORMAL', 'RUNNING')");
+        jdbc.update("INSERT INTO equipment VALUES (10, 'EQ-1', 'HYDRAULIC_PRESS', 'RUNNING')");
         jdbc.execute("""
                 CREATE TABLE manufacturing_event_json (
                   id BIGINT PRIMARY KEY, event_id VARCHAR(100), event_time TIMESTAMP,
@@ -306,7 +306,7 @@ class ManufacturingEventJsonRepositoryTest {
     @Test
     void activatesPendingEventAsBlockedWhenTargetEquipmentIsFaulted() {
         LocalDateTime now = LocalDateTime.now();
-        jdbc.update("UPDATE equipment SET health_status='CRITICAL', current_status='FAULT' WHERE id=10");
+        jdbc.update("UPDATE equipment SET current_status='FAULT' WHERE id=10");
         insert(1, now.minusSeconds(1), "PENDING", false);
 
         assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
@@ -314,9 +314,9 @@ class ManufacturingEventJsonRepositoryTest {
     }
 
     @Test
-    void activatesPendingEventAsReadyWhenTargetEquipmentHealthIsWarning() {
+    void activatesPendingEventAsReadyWhenCurrentStatusIsWarning() {
         LocalDateTime now = LocalDateTime.now();
-        jdbc.update("UPDATE equipment SET health_status='WARNING', current_status='WARNING' WHERE id=10");
+        jdbc.update("UPDATE equipment SET current_status='WARNING' WHERE id=10");
         insert(1, now.minusSeconds(1), "PENDING", false);
 
         assertThat(repository.prepareDispatchablePendingEvents(now, 1_000)).isEqualTo(1);
