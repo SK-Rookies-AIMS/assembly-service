@@ -37,12 +37,12 @@ public class SecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler)
                 )
                 .authorizeHttpRequests(auth -> auth
-                        // Temporary permitAll for SampleDB source-data API testing until login/JWT integration is connected.
                         .requestMatchers("/api/process/events/**").permitAll()
                         .requestMatchers("/api/process/sample").permitAll()
+                        .requestMatchers("/api/process/equipment/operation-rate").permitAll()
+                        .requestMatchers("/api/process/equipment/**").permitAll()
                         .requestMatchers("/api/process/press/**").permitAll()
                         .requestMatchers("/api/process/body/**").permitAll()
-//                        .requestMatchers("/api/kafka/manufacturing/**").permitAll()
                         .requestMatchers("/api/process/paint").permitAll()
                         .requestMatchers("/api/process/paint/dates").permitAll()
                         .requestMatchers("/api/process/assembly").permitAll()

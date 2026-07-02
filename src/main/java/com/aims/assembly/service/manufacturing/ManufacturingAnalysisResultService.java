@@ -54,7 +54,7 @@ public class ManufacturingAnalysisResultService {
      * <p>새 분석 결과 저장 시 이상 탐지 대시보드 캐시를 무효화한다.
      */
     @Transactional
-    @CacheEvict(cacheNames = {"press-anomaly-dashboard", "body-anomaly-dashboard"}, allEntries = true)
+    @CacheEvict(cacheNames = {"press-anomaly-dashboard-v2", "body-anomaly-dashboard-v2"}, allEntries = true)
     public void save(ManufacturingRawEvent raw, ManufacturingAnalysisEvent analysis) {
         var result = analysis.analysisResult();
         LocalDateTime eventTime = raw.eventTime();

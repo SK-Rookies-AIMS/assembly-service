@@ -36,7 +36,7 @@ public class BodyAnomalyDetectionService {
     private final ObjectMapper objectMapper;
 
     @Cacheable(
-            cacheNames = "body-anomaly-dashboard",
+            cacheNames = "body-anomaly-dashboard-v2",
             key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
     )
     public BodyAnomalyDetectionResponse findDashboard(
