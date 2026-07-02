@@ -1,6 +1,8 @@
 package com.aims.assembly.controller.process;
 
+import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.dto.process.AssemblyDashboardResponse;
+import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
 import com.aims.assembly.dto.process.ProcessAvailableDatesResponse;
 import com.aims.assembly.service.process.ProcessDashboardService;
@@ -11,7 +13,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -172,5 +176,69 @@ class ProcessDashboardControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.dates").isEmpty())
                 .andExpect(jsonPath("$.data.latestDate").doesNotExist());
+    }
+
+    @Test
+    void equipmentOperationRateEndpointReturnsFourProcessItemsInFixedOrder() throws Exception {
+        when(service.getEquipmentOperationRate()).thenReturn(new EquipmentOperationRateResponse(List.of(
+                item("PRESS", "프레스", 3, 1, 1, 0),
+                item("BODY", "차체", 2, 1, 0, 1),
+                item("PAINT", "도장", 0, 0, 0, 0),
+                item("ASSEMBLY", "의장", 2, 2, 0, 1)
+        )));
+
+        mockMvc.perform(get("/api/process/equipment/operation-rate"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(4))
+                .andExpect(jsonPath("$.data.items[0].processCode").value("PRESS"))
+                .andExpect(jsonPath("$.data.items[1].processCode").value("BODY"))
+                .andExpect(jsonPath("$.data.items[2].processCode").value("PAINT"))
+                .andExpect(jsonPath("$.data.items[3].processCode").value("ASSEMBLY"))
+                .andExpect(jsonPath("$.data.items[0].runningCount").value(3))
+                .andExpect(jsonPath("$.data.items[0].warningCount").value(1))
+                .andExpect(jsonPath("$.data.items[0].operatingCount").value(4))
+                .andExpect(jsonPath("$.data.items[0].stoppedCount").value(1))
+                .andExpect(jsonPath("$.data.items[0].faultCount").value(0))
+                .andExpect(jsonPath("$.data.items[0].totalCount").value(5))
+                .andExpect(jsonPath("$.data.items[0].operationRate").value(80.0))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.RUNNING").value(3))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.WARNING").value(1))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.STOPPED").value(1))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.FAULT").value(0))
+                .andExpect(jsonPath("$.data.items[2].totalCount").value(0))
+                .andExpect(jsonPath("$.data.items[2].operationRate").value(0.0));
+    }
+
+    private EquipmentOperationRateResponse.Item item(
+            String processCode,
+            String processName,
+            long runningCount,
+            long warningCount,
+            long stoppedCount,
+            long faultCount
+    ) {
+        Map<EquipmentOperationStatus, Long> statusCounts =
+                new EnumMap<>(EquipmentOperationStatus.class);
+        statusCounts.put(EquipmentOperationStatus.RUNNING, runningCount);
+        statusCounts.put(EquipmentOperationStatus.WARNING, warningCount);
+        statusCounts.put(EquipmentOperationStatus.STOPPED, stoppedCount);
+        statusCounts.put(EquipmentOperationStatus.FAULT, faultCount);
+        long operatingCount = runningCount + warningCount;
+        long totalCount = operatingCount + stoppedCount + faultCount;
+        double operationRate = totalCount == 0
+                ? 0.0
+                : Math.round(operatingCount * 1000.0 / totalCount) / 10.0;
+        return new EquipmentOperationRateResponse.Item(
+                processCode,
+                processName,
+                runningCount,
+                warningCount,
+                operatingCount,
+                stoppedCount,
+                faultCount,
+                totalCount,
+                operationRate,
+                statusCounts
+        );
     }
 }

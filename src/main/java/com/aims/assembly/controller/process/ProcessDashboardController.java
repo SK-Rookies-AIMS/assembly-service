@@ -2,9 +2,11 @@ package com.aims.assembly.controller.process;
 
 import com.aims.assembly.dto.common.ApiResponse;
 import com.aims.assembly.dto.process.AssemblyDashboardResponse;
+import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
 import com.aims.assembly.dto.process.ProcessAvailableDatesResponse;
 import com.aims.assembly.service.process.ProcessDashboardService;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -74,6 +76,15 @@ public class ProcessDashboardController {
         return ApiResponse.success(
                 dashboardService.getAssemblyDates(),
                 "Assembly process dashboard available dates"
+        );
+    }
+
+    @Operation(summary = "sampleDB equipment.current_status 기준 공정별 설비 가동률 조회")
+    @GetMapping("/equipment/operation-rate")
+    public ApiResponse<EquipmentOperationRateResponse> equipmentOperationRate() {
+        return ApiResponse.success(
+                dashboardService.getEquipmentOperationRate(),
+                "Equipment operation rate by process"
         );
     }
 }

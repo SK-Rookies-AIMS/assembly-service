@@ -2,13 +2,17 @@ package com.aims.assembly.service.process;
 
 import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
 import com.aims.assembly.domain.assembly.AssemblyAnalysisResult;
+import com.aims.assembly.domain.enums.EquipmentOperationStatus;
+import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.domain.enums.Severity;
 import com.aims.assembly.domain.paint.PaintAnalysisResult;
 import com.aims.assembly.dto.process.AssemblyDashboardResponse;
+import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
 import com.aims.assembly.dto.process.ProcessAvailableDatesResponse;
 import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
+import com.aims.assembly.repository.equipment.EquipmentOperationRateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -18,7 +22,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 @Service
@@ -35,6 +41,23 @@ public class ProcessDashboardService {
 
     private final PaintAnalysisResultRepository paintRepository;
     private final AssemblyAnalysisResultRepository assemblyRepository;
+    private final EquipmentOperationRateRepository equipmentOperationRateRepository;
+
+    public EquipmentOperationRateResponse getEquipmentOperationRate() {
+        Map<ProcessCode, EnumMap<EquipmentOperationStatus, Long>> countsByProcess =
+                initialEquipmentStatusCounts();
+        for (EquipmentOperationRateRepository.StatusCount row
+                : equipmentOperationRateRepository.countByProcessAndStatus()) {
+            countsByProcess.get(row.processCode()).put(row.status(), row.count());
+        }
+
+        return new EquipmentOperationRateResponse(List.of(
+                equipmentOperationRateItem(ProcessCode.PRESS, countsByProcess.get(ProcessCode.PRESS)),
+                equipmentOperationRateItem(ProcessCode.BODY, countsByProcess.get(ProcessCode.BODY)),
+                equipmentOperationRateItem(ProcessCode.PAINT, countsByProcess.get(ProcessCode.PAINT)),
+                equipmentOperationRateItem(ProcessCode.ASSEMBLY, countsByProcess.get(ProcessCode.ASSEMBLY))
+        ));
+    }
 
     public PaintDashboardResponse getPaintDashboard(
             LocalDate date,
@@ -178,6 +201,58 @@ public class ProcessDashboardService {
 
     public ProcessAvailableDatesResponse getAssemblyDates() {
         return ProcessAvailableDatesResponse.of(availableAssemblyDates());
+    }
+
+    private Map<ProcessCode, EnumMap<EquipmentOperationStatus, Long>> initialEquipmentStatusCounts() {
+        EnumMap<ProcessCode, EnumMap<EquipmentOperationStatus, Long>> countsByProcess =
+                new EnumMap<>(ProcessCode.class);
+        for (ProcessCode processCode : List.of(
+                ProcessCode.PRESS,
+                ProcessCode.BODY,
+                ProcessCode.PAINT,
+                ProcessCode.ASSEMBLY
+        )) {
+            EnumMap<EquipmentOperationStatus, Long> statusCounts =
+                    new EnumMap<>(EquipmentOperationStatus.class);
+            for (EquipmentOperationStatus status : EquipmentOperationStatus.values()) {
+                statusCounts.put(status, 0L);
+            }
+            countsByProcess.put(processCode, statusCounts);
+        }
+        return countsByProcess;
+    }
+
+    private EquipmentOperationRateResponse.Item equipmentOperationRateItem(
+            ProcessCode processCode,
+            EnumMap<EquipmentOperationStatus, Long> statusCounts
+    ) {
+        long runningCount = statusCounts.get(EquipmentOperationStatus.RUNNING);
+        long warningCount = statusCounts.get(EquipmentOperationStatus.WARNING);
+        long stoppedCount = statusCounts.get(EquipmentOperationStatus.STOPPED);
+        long faultCount = statusCounts.get(EquipmentOperationStatus.FAULT);
+        long operatingCount = runningCount + warningCount;
+        long totalCount = runningCount + warningCount + stoppedCount + faultCount;
+        return new EquipmentOperationRateResponse.Item(
+                processCode.name(),
+                processName(processCode),
+                runningCount,
+                warningCount,
+                operatingCount,
+                stoppedCount,
+                faultCount,
+                totalCount,
+                percentage(operatingCount, totalCount),
+                new EnumMap<>(statusCounts)
+        );
+    }
+
+    private String processName(ProcessCode processCode) {
+        return switch (processCode) {
+            case PRESS -> "프레스";
+            case BODY -> "차체";
+            case PAINT -> "도장";
+            case ASSEMBLY -> "의장";
+        };
     }
 
     private PaintDashboardResponse.Alert paintAlert(PaintAnalysisResult row) {

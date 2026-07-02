@@ -27,15 +27,21 @@ class EquipmentTest {
     }
 
     @Test
-    void applyWarningStatusUpdatesLastFaultTime() {
+    void applyWarningStatusDoesNotUpdateLastFaultTime() {
+        LocalDateTime existingFaultAt = LocalDateTime.of(2026, 6, 22, 9, 0);
+        LocalDateTime existingRecoveredAt = LocalDateTime.of(2026, 6, 22, 8, 0);
         Equipment equipment = Equipment.builder()
-                .currentStatus(EquipmentOperationStatus.RUNNING).build();
-        LocalDateTime faultAt = LocalDateTime.of(2026, 6, 22, 10, 0);
+                .currentStatus(EquipmentOperationStatus.RUNNING)
+                .lastFaultTime(existingFaultAt)
+                .lastRecoveredTime(existingRecoveredAt)
+                .build();
+        LocalDateTime warningAt = LocalDateTime.of(2026, 6, 22, 10, 0);
 
-        equipment.applyStatus(EquipmentOperationStatus.WARNING, faultAt, "temperature threshold");
+        equipment.applyStatus(EquipmentOperationStatus.WARNING, warningAt, "temperature threshold");
 
         assertThat(equipment.getCurrentStatus()).isEqualTo(EquipmentOperationStatus.WARNING);
-        assertThat(equipment.getLastFaultTime()).isEqualTo(faultAt);
+        assertThat(equipment.getLastFaultTime()).isEqualTo(existingFaultAt);
+        assertThat(equipment.getLastRecoveredTime()).isEqualTo(existingRecoveredAt);
         assertThat(equipment.getReason()).isEqualTo("temperature threshold");
     }
 }

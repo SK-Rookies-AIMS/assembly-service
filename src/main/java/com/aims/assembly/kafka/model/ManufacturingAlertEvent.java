@@ -11,7 +11,7 @@ import java.util.List;
  * <p>alertType 구분:
  * <ul>
  *   <li>{@code PROCESS_RISK} - 제조 공정 분석 결과 riskScore(processRisk) >= 60</li>
- *   <li>{@code EQUIPMENT_STATUS} - 설비 상태값(FAULT/STOPPED/ERROR/DOWN) 이상 감지</li>
+ *   <li>{@code EQUIPMENT_STATUS} - 설비 상태값(WARNING/STOPPED/FAULT) 이상 감지</li>
  * </ul>
  * alert topic message key 는 {@code alertId} 를 사용한다.
  */

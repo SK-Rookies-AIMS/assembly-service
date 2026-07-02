@@ -343,9 +343,9 @@ class ManufacturingKafkaConsumerTest {
         jdbc.execute("""
                 CREATE TABLE equipment (
                   id BIGINT PRIMARY KEY, equipment_code VARCHAR(50), equipment_type VARCHAR(50),
-                  health_status VARCHAR(20), current_status VARCHAR(20))
+                  current_status VARCHAR(20) NOT NULL DEFAULT 'RUNNING')
                 """);
-        jdbc.update("INSERT INTO equipment VALUES (10, 'EQ-1', 'HYDRAULIC_PRESS', 'NORMAL', 'RUNNING')");
+        jdbc.update("INSERT INTO equipment VALUES (10, 'EQ-1', 'HYDRAULIC_PRESS', 'RUNNING')");
         jdbc.execute("""
                 CREATE TABLE manufacturing_event_json (
                   id BIGINT PRIMARY KEY, event_id VARCHAR(100), event_time TIMESTAMP,

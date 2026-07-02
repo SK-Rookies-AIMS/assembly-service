@@ -280,10 +280,10 @@ class ManufacturingEventAnalyzerTest {
 
             assertThat(result.riskScores().overallRiskScore()).isEqualTo(100.0);
             assertThat(result.analysisResult().isEquipmentFault()).isTrue();
-            assertThat(result.reason().mainReason()).isEqualTo("설비 상태값에서 이상(FAULT/STOPPED/ERROR/DOWN)이 감지되었습니다.");
+            assertThat(result.reason().mainReason()).isEqualTo("설비 상태값에서 이상(WARNING/STOPPED/FAULT)이 감지되었습니다.");
 
             assertThat(detail.abnormalType()).isEqualTo("EQUIPMENT");
-            assertThat(detail.analysisMessageReason()).isEqualTo("설비 상태값에서 이상(FAULT/STOPPED/ERROR/DOWN)이 감지되었습니다.");
+            assertThat(detail.analysisMessageReason()).isEqualTo("설비 상태값에서 이상(WARNING/STOPPED/FAULT)이 감지되었습니다.");
         }
 
         @Test

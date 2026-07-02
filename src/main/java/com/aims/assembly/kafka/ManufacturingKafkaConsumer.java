@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -32,7 +33,7 @@ import java.util.regex.Pattern;
  * <p>alert 발행 경로:
  * <ul>
  *   <li>Case A: analysis topic → consumeAnalysisForAlert → riskScore WARNING/CRITICAL → alert 발행</li>
- *   <li>Case B: raw topic → consumeRaw → 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 직접 감지 → alert 발행</li>
+ *   <li>Case B: raw topic → consumeRaw → 설비 이상 상태(WARNING/STOPPED/FAULT) 직접 감지 → alert 발행</li>
  * </ul>
  */
 public class ManufacturingKafkaConsumer {
@@ -78,7 +79,7 @@ public class ManufacturingKafkaConsumer {
         // 공정 분석 결과 생성 후 analysis 토픽 발행
         boolean analysisStatusUpdated = false;
         try {
-            // Case B: 설비 이상 상태(FAULT/STOPPED/ERROR/DOWN) 감지 시 raw 단계에서 즉시 alert 발행
+            // Case B: 설비 이상 상태(WARNING/STOPPED/FAULT) 감지 시 raw 단계에서 즉시 alert 발행
             // 분석 결과(processRisk)와 무관하게 독립적으로 발행된다
             if (analyzer.isEquipmentAbnormal(event)) {
                 log.warn(
@@ -195,9 +196,9 @@ public class ManufacturingKafkaConsumer {
         // Dashboard Consumer Group 수신 이력 기록
         traceStore.recordConsumed(record, "dashboard-consumer-group", event.eventId());
         equipmentStateService.applyStatusEvent(event);
-        if ("RECOVERED".equals(event.changeType())) {
+        if ("RECOVERED".equalsIgnoreCase(event.changeType())) {
             eventRepository.restoreBlockedEvents(event.equipmentId(), event.equipmentCode());
-        } else if ("FAULT".equals(event.changeType()) && isBlockingEquipmentStatus(event.operationStatus())) {
+        } else if ("FAULT".equalsIgnoreCase(event.changeType()) && isBlockingEquipmentStatus(event.operationStatus())) {
             eventRepository.blockReadyEvents(event.equipmentId(), event.equipmentCode());
         }
         log.info(
@@ -210,8 +211,11 @@ public class ManufacturingKafkaConsumer {
     }
 
     private boolean isBlockingEquipmentStatus(String operationStatus) {
-        return "FAULT".equalsIgnoreCase(operationStatus)
-                || "STOPPED".equalsIgnoreCase(operationStatus);
+        if (operationStatus == null || operationStatus.isBlank()) {
+            return false;
+        }
+        String normalized = operationStatus.trim().toUpperCase(Locale.ROOT);
+        return "FAULT".equals(normalized) || "STOPPED".equals(normalized);
     }
 
     @KafkaListener(

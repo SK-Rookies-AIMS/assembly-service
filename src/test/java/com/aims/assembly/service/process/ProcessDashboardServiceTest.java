@@ -2,13 +2,16 @@ package com.aims.assembly.service.process;
 
 import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
 import com.aims.assembly.domain.assembly.AssemblyAnalysisResult;
+import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.domain.enums.Severity;
 import com.aims.assembly.domain.paint.PaintAnalysisResult;
 import com.aims.assembly.dto.process.AssemblyDashboardResponse;
+import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
 import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
+import com.aims.assembly.repository.equipment.EquipmentOperationRateRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Pageable;
@@ -28,11 +31,17 @@ class ProcessDashboardServiceTest {
             mock(PaintAnalysisResultRepository.class);
     private final AssemblyAnalysisResultRepository assemblyRepository =
             mock(AssemblyAnalysisResultRepository.class);
+    private final EquipmentOperationRateRepository equipmentOperationRateRepository =
+            mock(EquipmentOperationRateRepository.class);
     private ProcessDashboardService service;
 
     @BeforeEach
     void setUp() {
-        service = new ProcessDashboardService(paintRepository, assemblyRepository);
+        service = new ProcessDashboardService(
+                paintRepository,
+                assemblyRepository,
+                equipmentOperationRateRepository
+        );
     }
 
     @Test
@@ -173,6 +182,56 @@ class ProcessDashboardServiceTest {
         assertThat(service.getPaintDates().latestDate()).isEqualTo(LocalDate.of(2026, 6, 18));
         assertThat(service.getAssemblyDates().dates()).containsExactly(LocalDate.of(2026, 6, 1));
         assertThat(service.getAssemblyDates().latestDate()).isEqualTo(LocalDate.of(2026, 6, 1));
+    }
+
+    @Test
+    void equipmentOperationRateUsesCurrentStatusAndIncludesWarningAsOperating() {
+        when(equipmentOperationRateRepository.countByProcessAndStatus()).thenReturn(List.of(
+                new EquipmentOperationRateRepository.StatusCount(
+                        ProcessCode.PRESS, EquipmentOperationStatus.RUNNING, 3),
+                new EquipmentOperationRateRepository.StatusCount(
+                        ProcessCode.PRESS, EquipmentOperationStatus.WARNING, 1),
+                new EquipmentOperationRateRepository.StatusCount(
+                        ProcessCode.PRESS, EquipmentOperationStatus.STOPPED, 1),
+                new EquipmentOperationRateRepository.StatusCount(
+                        ProcessCode.BODY, EquipmentOperationStatus.RUNNING, 2),
+                new EquipmentOperationRateRepository.StatusCount(
+                        ProcessCode.BODY, EquipmentOperationStatus.FAULT, 1),
+                new EquipmentOperationRateRepository.StatusCount(
+                        ProcessCode.ASSEMBLY, EquipmentOperationStatus.WARNING, 2),
+                new EquipmentOperationRateRepository.StatusCount(
+                        ProcessCode.ASSEMBLY, EquipmentOperationStatus.FAULT, 1)
+        ));
+
+        EquipmentOperationRateResponse response = service.getEquipmentOperationRate();
+
+        assertThat(response.items()).hasSize(4);
+        assertThat(response.items()).extracting(EquipmentOperationRateResponse.Item::processCode)
+                .containsExactly("PRESS", "BODY", "PAINT", "ASSEMBLY");
+        assertThat(response.items().get(0)).satisfies(item -> {
+            assertThat(item.runningCount()).isEqualTo(3);
+            assertThat(item.warningCount()).isEqualTo(1);
+            assertThat(item.operatingCount()).isEqualTo(4);
+            assertThat(item.stoppedCount()).isEqualTo(1);
+            assertThat(item.faultCount()).isZero();
+            assertThat(item.totalCount()).isEqualTo(5);
+            assertThat(item.operationRate()).isEqualTo(80.0);
+            assertThat(item.statusCounts()).containsEntry(EquipmentOperationStatus.WARNING, 1L);
+        });
+        assertThat(response.items().get(2)).satisfies(item -> {
+            assertThat(item.processCode()).isEqualTo("PAINT");
+            assertThat(item.totalCount()).isZero();
+            assertThat(item.operationRate()).isEqualTo(0.0);
+            assertThat(item.statusCounts()).containsEntry(EquipmentOperationStatus.RUNNING, 0L)
+                    .containsEntry(EquipmentOperationStatus.WARNING, 0L)
+                    .containsEntry(EquipmentOperationStatus.STOPPED, 0L)
+                    .containsEntry(EquipmentOperationStatus.FAULT, 0L);
+        });
+        assertThat(response.items().get(3)).satisfies(item -> {
+            assertThat(item.warningCount()).isEqualTo(2);
+            assertThat(item.faultCount()).isEqualTo(1);
+            assertThat(item.operationRate()).isEqualTo(66.7);
+        });
     }
 
     private ManufacturingAnalysisResult result(
