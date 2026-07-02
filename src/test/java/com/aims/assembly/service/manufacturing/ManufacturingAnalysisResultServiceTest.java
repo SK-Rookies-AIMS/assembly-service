@@ -272,6 +272,39 @@ class ManufacturingAnalysisResultServiceTest {
         assertThat(detail.getTimestampDelaySec()).isEqualTo(4.2);
     }
 
+    @Test
+    void bodyDetailUsesFrequencyBandsForPeakValue() {
+        ManufacturingRawEvent body = rawEvent(ProcessCode.BODY, "EVT-BODY-PEAK", Map.of(
+                "sensor", Map.of(
+                        "robotArmVibration", Map.of(
+                                "vibrationScore", 0.27,
+                                "vibrationPeak", 0.001193284
+                        )
+                ),
+                "processData", Map.of(
+                        "body", Map.of(
+                                "robotMotionStatus", "NORMAL",
+                                "robotOperationMode", "AUTO",
+                                "frequencyPeakBand", "501_600_HZ",
+                                "frequencyBands", Map.of(
+                                        "freq_0_100_hz", 0.001193284,
+                                        "freq_501_600_hz", 0.002907113
+                                )
+                        )
+                )
+        ));
+
+        service.save(body, analysisEvent(body));
+
+        ArgumentCaptor<BodyAnalysisResult> captor = ArgumentCaptor.forClass(BodyAnalysisResult.class);
+        verify(bodyRepository).save(captor.capture());
+        BodyAnalysisResult detail = captor.getValue();
+        assertThat(detail.getRobotVibrationScore()).isEqualTo(0.27);
+        assertThat(detail.getFrequencyPeakBand()).isEqualTo("501_600_HZ");
+        assertThat(detail.getFrequencyPeakValue()).isEqualTo(0.002907113);
+        assertThat(detail.getFrequencyBandsJson()).contains("freq_501_600_hz");
+    }
+
     private ManufacturingRawEvent rawEvent(ProcessCode processCode, String eventId, Map<String, Object> json) {
         return new ManufacturingRawEvent(
                 0L,

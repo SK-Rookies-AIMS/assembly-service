@@ -379,29 +379,49 @@ public class ManufacturingEventAnalyzer {
                         "robotArmVibration",
                         "vibrationScore"
                 );
-                double frequency = number(
+                double vibrationPeak = number(
                         event.eventJson(),
                         "sensor",
                         "robotArmVibration",
-                        "frequencyHz"
+                        "vibrationPeak"
                 );
                 String robotMotionStatus = text(event.eventJson(), "processData", "body", "robotMotionStatus");
-                boolean isMotionAbnormal = "ABNORMAL".equalsIgnoreCase(robotMotionStatus);
-                
+                String robotOperationMode = text(event.eventJson(), "processData", "body", "robotOperationMode");
+                String frequencyPeakBand = text(event.eventJson(), "processData", "body", "frequencyPeakBand");
+                Object frequencyBandsObj = value(event.eventJson(), "processData", "body", "frequencyBands");
+                var frequencyBands = com.aims.assembly.service.body.BodyFrequencyBandSupport.toDoubleMap(frequencyBandsObj);
+                Double peakBandValue = com.aims.assembly.service.body.BodyFrequencyBandSupport.resolvePeakValue(
+                        frequencyPeakBand,
+                        frequencyBands,
+                        vibrationPeak > 0 ? vibrationPeak : null
+                );
+                double peakValue = peakBandValue != null ? peakBandValue : 0.0;
+
+                boolean isMotionAbnormal = robotMotionStatus != null
+                        && ("ABNORMAL".equalsIgnoreCase(robotMotionStatus)
+                        || "COLLISION_RISK".equalsIgnoreCase(robotMotionStatus));
+                boolean isOperationAbnormal = robotOperationMode != null
+                        && ("AUTO_MANUAL_STOPPED".equalsIgnoreCase(robotOperationMode)
+                        || "STOPPED".equalsIgnoreCase(robotOperationMode)
+                        || "MANUAL".equalsIgnoreCase(robotOperationMode));
+
                 double score = clamp(
                         Math.min(50.0, robotScore * 40.0)
-                        + Math.min(30.0, Math.max(0.0, frequency - 100.0) * 0.04)
+                        + Math.min(30.0, peakValue * 1000.0)
                         + (isMotionAbnormal ? 30.0 : 0.0)
+                        + (isOperationAbnormal ? 20.0 : 0.0)
                 );
                 yield new ProcessComponent(
                         score,
                         Map.of(
                                 "processCode", event.processCode().name(),
                                 "robotVibrationScore", robotScore,
-                                "frequencyHz", frequency,
-                                "robotMotionStatus", String.valueOf(robotMotionStatus)
+                                "frequencyPeakValue", peakValue,
+                                "robotMotionStatus", String.valueOf(robotMotionStatus),
+                                "robotOperationMode", String.valueOf(robotOperationMode),
+                                "frequencyPeakBand", String.valueOf(frequencyPeakBand)
                         ),
-                        "min(50, robotVibrationScore * 40) + min(30, max(0, frequencyHz - 100) * 0.04) + (robotMotionStatus is abnormal ? 30 : 0)"
+                        "min(50, robotVibrationScore * 40) + min(30, frequencyPeakValue * 1000) + motion/operation penalties"
                 );
             }
             case PAINT -> {

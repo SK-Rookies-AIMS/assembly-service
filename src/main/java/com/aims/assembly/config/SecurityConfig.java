@@ -41,6 +41,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/process/events/**").permitAll()
                         .requestMatchers("/api/process/sample").permitAll()
                         .requestMatchers("/api/process/press/**").permitAll()
+                        .requestMatchers("/api/process/body/**").permitAll()
 //                        .requestMatchers("/api/kafka/manufacturing/**").permitAll()
                         .requestMatchers(
                                 "/",

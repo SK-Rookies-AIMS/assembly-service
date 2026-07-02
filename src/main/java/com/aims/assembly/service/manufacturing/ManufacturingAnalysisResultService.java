@@ -15,6 +15,7 @@ import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.ManufacturingAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
+import com.aims.assembly.service.body.BodyFrequencyBandSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -184,12 +185,18 @@ public class ManufacturingAnalysisResultService {
             }
             case BODY -> {
                 Double robotVibrationScore = doubleVal(json, "sensor", "robotArmVibration", "vibrationScore");
-                Double frequencyHz = doubleVal(json, "sensor", "robotArmVibration", "frequencyHz");
+                Double vibrationPeak = doubleVal(json, "sensor", "robotArmVibration", "vibrationPeak");
                 String frequencyPeakBand = text(json, "processData", "body", "frequencyPeakBand");
                 String robotOperationMode = text(json, "processData", "body", "robotOperationMode");
                 String robotMotionStatus = text(json, "processData", "body", "robotMotionStatus");
-                
+
                 Object frequencyBandsObj = value(json, "processData", "body", "frequencyBands");
+                Map<String, Double> frequencyBands = BodyFrequencyBandSupport.toDoubleMap(frequencyBandsObj);
+                Double frequencyPeakValue = BodyFrequencyBandSupport.resolvePeakValue(
+                        frequencyPeakBand,
+                        frequencyBands,
+                        vibrationPeak
+                );
                 String frequencyBandsJson = null;
                 if (frequencyBandsObj != null) {
                     try {
@@ -198,11 +205,13 @@ public class ManufacturingAnalysisResultService {
                         log.error("Failed to serialize frequencyBands", e);
                     }
                 }
-                log.info("[DETAIL_SAVE][BODY] resultId={}, eventId={}, robotOperationMode={}, frequencyBandsObj={}, frequencyBandsJson={}",
+                log.info("[DETAIL_SAVE][BODY] resultId={}, eventId={}, robotMotionStatus={}, robotOperationMode={}, frequencyPeakBand={}, frequencyPeakValue={}, frequencyBandsJson={}",
                         savedResult.getId(),
                         savedResult.getEventId(),
+                        robotMotionStatus,
                         robotOperationMode,
-                        frequencyBandsObj,
+                        frequencyPeakBand,
+                        frequencyPeakValue,
                         frequencyBandsJson);
 
                 bodyRepository.save(
@@ -212,7 +221,7 @@ public class ManufacturingAnalysisResultService {
                                 .robotOperationMode(robotOperationMode)
                                 .robotVibrationScore(robotVibrationScore)
                                 .frequencyPeakBand(frequencyPeakBand)
-                                .frequencyPeakValue(frequencyHz)
+                                .frequencyPeakValue(frequencyPeakValue)
                                 .frequencyBandsJson(frequencyBandsJson)
                                 .build()
                 );

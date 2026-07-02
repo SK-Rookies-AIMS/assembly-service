@@ -137,7 +137,7 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
         assertThat(detail.getRobotMotionStatus()).isEqualTo("NORMAL");
         assertThat(detail.getRobotVibrationScore()).isEqualTo(0.5);
         assertThat(detail.getFrequencyPeakBand()).isEqualTo("MID");
-        assertThat(detail.getFrequencyPeakValue()).isEqualTo(150.0);
+        assertThat(detail.getFrequencyPeakValue()).isEqualTo(0.4);
         assertThat(detail.getFrequencyBandsJson()).contains("100Hz").contains("200Hz");
     }
 
