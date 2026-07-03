@@ -59,7 +59,7 @@ class ManufacturingAnalysisResultServiceTest {
                 bodyRepository,
                 paintRepository,
                 assemblyRepository,
-                mock(ManufacturingEventAnalyzer.class),
+                new ManufacturingEventAnalyzer(),
                 new ObjectMapper()
         );
         when(resultRepository.saveAndFlush(any(ManufacturingAnalysisResult.class)))
@@ -303,6 +303,53 @@ class ManufacturingAnalysisResultServiceTest {
         assertThat(detail.getFrequencyPeakBand()).isEqualTo("501_600_HZ");
         assertThat(detail.getFrequencyPeakValue()).isEqualTo(0.002907113);
         assertThat(detail.getFrequencyBandsJson()).contains("freq_501_600_hz");
+    }
+
+    @Test
+    void pressAndBodyDetailsUseAnalyzerFallbackWhenDetailPayloadIsMissing() {
+        ManufacturingRawEvent press = rawEvent(ProcessCode.PRESS, "EVT-PRESS-FALLBACK", Map.of(
+                "processMetrics", Map.of(
+                        "cycleTimeSec", 47.5,
+                        "stationDelaySec", 7.5
+                ),
+                "sensor", Map.of(
+                        "current", Map.of("rmsAmpere", 2.0)
+                )
+        ));
+
+        service.save(press, analysisEvent(press));
+
+        ArgumentCaptor<PressAnalysisResult> pressCaptor =
+                ArgumentCaptor.forClass(PressAnalysisResult.class);
+        verify(pressRepository).save(pressCaptor.capture());
+        PressAnalysisResult pressDetail = pressCaptor.getValue();
+        assertThat(pressDetail.getCountIncreaseYn()).isFalse();
+        assertThat(pressDetail.getTargetCycleTimeSec()).isEqualTo(40.0);
+        assertThat(pressDetail.getActualCycleTimeSec()).isEqualTo(47.5);
+        assertThat(pressDetail.getCycleTimeGapSec()).isEqualTo(7.5);
+        assertThat(pressDetail.getTimestampDelaySec()).isEqualTo(7.5);
+
+        ManufacturingRawEvent body = rawEvent(ProcessCode.BODY, "EVT-BODY-FALLBACK", Map.of(
+                "sensor", Map.of(
+                        "robotArmVibration", Map.of(
+                                "vibrationScore", 0.31,
+                                "vibrationPeak", 0.004
+                        )
+                )
+        ));
+
+        service.save(body, analysisEvent(body));
+
+        ArgumentCaptor<BodyAnalysisResult> bodyCaptor =
+                ArgumentCaptor.forClass(BodyAnalysisResult.class);
+        verify(bodyRepository).save(bodyCaptor.capture());
+        BodyAnalysisResult bodyDetail = bodyCaptor.getValue();
+        assertThat(bodyDetail.getRobotMotionStatus()).isEqualTo("NORMAL");
+        assertThat(bodyDetail.getRobotOperationMode()).isEqualTo("NORMAL");
+        assertThat(bodyDetail.getRobotVibrationScore()).isEqualTo(0.31);
+        assertThat(bodyDetail.getFrequencyPeakBand()).isEqualTo("UNKNOWN");
+        assertThat(bodyDetail.getFrequencyPeakValue()).isEqualTo(0.004);
+        assertThat(bodyDetail.getFrequencyBandsJson()).isEqualTo("{}");
     }
 
     private ManufacturingRawEvent rawEvent(ProcessCode processCode, String eventId, Map<String, Object> json) {
