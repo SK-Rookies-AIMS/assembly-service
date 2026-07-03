@@ -505,9 +505,9 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
             double score = result.riskScores().overallRiskScore();
 
-            // min(45, 1 * 40) = 40.0
-            assertThat(score).isEqualTo(40.0);
-            assertThat(score).isBetween(20.0, 60.0);
+            // min(45, 1 * 4) = 4.0
+            assertThat(score).isEqualTo(4.0);
+            assertThat(score).isBetween(0.0, 20.0);
         }
 
         @Test
@@ -526,9 +526,9 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
             double score = result.riskScores().overallRiskScore();
 
-            // min(45, 40) + min(35, 30) + min(20, 20) = 40 + 30 + 20 = 90.0
-            assertThat(score).isEqualTo(90.0);
-            assertThat(result.riskLevel()).isEqualTo("CRITICAL");
+            // min(45, 4) + min(35, 3) + min(20, 2) = 4 + 3 + 2 = 9.0
+            assertThat(score).isEqualTo(9.0);
+            assertThat(result.riskLevel()).isEqualTo("LOW");
         }
 
         @Test
@@ -547,9 +547,9 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
             double score = result.riskScores().overallRiskScore();
 
-            // min(45, 120) + min(35, 60) + min(20, 40) = 45 + 35 + 20 = 100.0
-            assertThat(score).isEqualTo(100.0);
-            assertThat(result.riskLevel()).isEqualTo("CRITICAL");
+            // min(45, 12) + min(35, 6) + min(20, 4) = 12 + 6 + 4 = 22.0
+            assertThat(score).isEqualTo(22.0);
+            assertThat(result.riskLevel()).isEqualTo("LOW");
         }
 
     }

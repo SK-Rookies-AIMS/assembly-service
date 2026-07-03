@@ -137,33 +137,6 @@ public class ManufacturingKafkaConsumer {
     }
 
     @KafkaListener(
-            topics = "${app.kafka.topics.raw.name}",
-            // 별도 Consumer Group을 통한 제조 분석 Group과 동일 raw 이벤트 독립 소비
-            groupId = "ai-consumer-group",
-            concurrency = "2",
-            autoStartup = "${app.kafka.listeners-enabled:true}"
-    )
-    public void consumeRawForAi(ConsumerRecord<String, String> record) {
-        // AI 분석 입력용 raw 이벤트 역직렬화
-        ManufacturingRawEvent event = rawEventParser.parse(record.value());
-
-        // AI Consumer Group 수신 이력 기록
-        traceStore.recordConsumed(record, "ai-consumer-group", event.eventId());
-        log.info(
-                "AI 분석 대상 이벤트 수신: event={}, equipment={}, partition={}",
-                event.eventId(),
-                event.equipmentCode(),
-                record.partition()
-        );
-
-        // 병목 분석과 불량 전이 예측 결과를 각각 analysis 토픽에 발행
-        producer.sendAnalysis(analyzer.analyzeBottleneck(event)).join();
-        producer.sendAnalysis(analyzer.analyzeDefectTransfer(event)).join();
-    }
-
-
-
-    @KafkaListener(
             topics = "${app.kafka.topics.analysis.name}",
             groupId = "alert-analysis-consumer-group",
             concurrency = "2",

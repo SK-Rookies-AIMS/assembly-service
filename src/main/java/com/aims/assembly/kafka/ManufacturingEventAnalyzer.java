@@ -470,9 +470,9 @@ public class ManufacturingEventAnalyzer {
                         "fasteningErrorCount"
                 );
                 double score = clamp(
-                        Math.min(45.0, sequenceErrors * 40.0)
-                        + Math.min(35.0, missingParts * 30.0)
-                        + Math.min(20.0, fasteningErrors * 20.0)
+                        Math.min(45.0, sequenceErrors * 4.0)
+                        + Math.min(35.0, missingParts * 3.0)
+                        + Math.min(20.0, fasteningErrors * 2.0)
                 );
                 yield new ProcessComponent(
                         score,
@@ -482,7 +482,7 @@ public class ManufacturingEventAnalyzer {
                                 "missingPartCount", missingParts,
                                 "fasteningErrorCount", fasteningErrors
                         ),
-                        "min(45, sequenceErrorCount * 40) + min(35, missingPartCount * 30) + min(20, fasteningErrorCount * 20)"
+                        "min(45, sequenceErrorCount * 4) + min(35, missingPartCount * 3) + min(20, fasteningErrorCount * 2)"
                 );
             }
         };
