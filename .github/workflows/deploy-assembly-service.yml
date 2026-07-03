@@ -1,0 +1,139 @@
+name: Build Assembly Service and Update GitOps
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "src/**"
+      - "build.gradle"
+      - "settings.gradle"
+      - "gradle/**"
+      - "gradlew"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/deploy-assembly-service.yml"
+
+  workflow_dispatch:
+
+concurrency:
+  group: assembly-service-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY: aims/assembly-service
+
+  INFRA_REPOSITORY: SK-Rookies-AIMS/infra
+  INFRA_BRANCH: dev
+  INFRA_MANIFEST_PATH: k8s/assembly-service/deployment.yaml
+
+jobs:
+  build-and-update-gitops:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout assembly-service
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" >/dev/null 2>&1 \
+          || aws ecr create-repository \
+            --repository-name "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --image-scanning-configuration scanOnPush=true \
+            --image-tag-mutability MUTABLE
+
+      - name: Build and push image
+        id: build-image
+        shell: bash
+        run: |
+          COMMIT_TAG="dev-${GITHUB_SHA::12}"
+
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${COMMIT_TAG}"
+          DEV_IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:dev"
+
+          docker build \
+            -t "$IMAGE_URI" \
+            -t "$DEV_IMAGE_URI" \
+            .
+
+          docker push "$IMAGE_URI"
+          docker push "$DEV_IMAGE_URI"
+
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout infra repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INFRA_REPOSITORY }}
+          ref: ${{ env.INFRA_BRANCH }}
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          path: infra
+          fetch-depth: 0
+
+      - name: Update assembly-service image
+        env:
+          IMAGE_URI: ${{ steps.build-image.outputs.image_uri }}
+        shell: bash
+        run: |
+          MANIFEST="infra/${INFRA_MANIFEST_PATH}"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "Manifest not found: $MANIFEST"
+            exit 1
+          fi
+
+          sed -i -E \
+            "s|^([[:space:]]*)image:.*aims/assembly-service.*$|\1image: ${IMAGE_URI}|" \
+            "$MANIFEST"
+
+          grep -n "image:" "$MANIFEST"
+
+      - name: Commit and push GitOps change
+        shell: bash
+        run: |
+          cd infra
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "${INFRA_MANIFEST_PATH}"
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes"
+            exit 0
+          fi
+
+          git commit -m "chore(assembly-service): deploy dev-${GITHUB_SHA::12}"
+
+          for ATTEMPT in 1 2 3
+          do
+            git pull --rebase origin "${INFRA_BRANCH}"
+
+            if git push origin "HEAD:${INFRA_BRANCH}"; then
+              exit 0
+            fi
+
+            sleep $((ATTEMPT * 5))
+          done
+
+          echo "Failed to push infra repository"
+          exit 1
