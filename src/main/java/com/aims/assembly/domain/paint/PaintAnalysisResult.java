@@ -1,5 +1,6 @@
 package com.aims.assembly.domain.paint;
 
+import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -8,61 +9,35 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "paint_analysis_result")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class PaintAnalysisResult {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "analysis_result_id")
+    private Long analysisResultId; // 공통 분석 결과 ID, PK 겸 FK
 
-    @Column(name = "manufacturing_event_id")
-    private Long manufacturingEventId;
+    @Column(name = "image_position", length = 20)
+    private String imagePosition; // 이미지 촬영 위치
 
-    @Column(name = "thermal_vision_id")
-    private Long thermalVisionId;
+    @Column(name = "thermal_std_temp")
+    private Double thermalStdTemp; // 온도 표준편차
 
-    @Column(name = "car_master_id")
-    private Long carMasterId;
+    @Column(name = "thickness_value")
+    private Double thicknessValue; // 도장 두께
 
-    @Column(name = "process_code")
-    private String processCode;
+    @Column(name = "defect_score")
+    private Double defectScore; // 비전 불량 점수
 
-    @Column(name = "equipment_code")
-    private String equipmentCode;
-
-    @Column(name = "operation_rate")
-    private Double operationRate;
-
-    @Column(name = "defect_count")
-    private Integer defectCount;
-
-    @Column(name = "defect_rate")
-    private Double defectRate;
-
-    @Column(name = "thermal_avg_temp")
-    private Double thermalAvgTemp;
-
-    @Column(name = "thermal_max_temp")
-    private Double thermalMaxTemp;
+    @Column(name = "vision_label", length = 30)
+    private String visionLabel; // 비전 라벨
 
     @Column(name = "surface_quality_score")
-    private Double surfaceQualityScore;
+    private Double surfaceQualityScore; // 표면 품질 점수
 
-    @Column(name = "threshold_value")
-    private Double thresholdValue;
-
-    @Column(name = "is_abnormal")
-    private Boolean isAbnormal;
-
-    @Column(name = "abnormal_type")
-    private String abnormalType;
-
-    @Column(name = "risk_score")
-    private Double riskScore;
-
-    @Column(name = "analyzed_at")
-    private LocalDateTime analyzedAt;
+    @OneToOne(fetch = FetchType.LAZY)
+    @MapsId
+    @JoinColumn(name = "analysis_result_id", nullable = false)
+    private ManufacturingAnalysisResult analysisResult;
 }

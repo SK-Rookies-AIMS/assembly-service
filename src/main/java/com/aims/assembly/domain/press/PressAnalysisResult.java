@@ -1,5 +1,6 @@
 package com.aims.assembly.domain.press;
 
+import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -8,58 +9,32 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "press_analysis_result")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class PressAnalysisResult {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "analysis_result_id")
+    private Long analysisResultId; // 공통 분석 결과 ID, PK 겸 FK
 
-    @Column(name = "manufacturing_event_id")
-    private Long manufacturingEventId;
+    @Column(name = "count_increase_yn")
+    private Boolean countIncreaseYn; // 생산 카운트 증가 여부
 
-    @Column(name = "car_master_id")
-    private Long carMasterId;
+    @Column(name = "target_cycle_time_sec")
+    private Double targetCycleTimeSec; // 기준 사이클타임 초
 
-    @Column(name = "process_code")
-    private String processCode;
+    @Column(name = "actual_cycle_time_sec")
+    private Double actualCycleTimeSec; // 실제 사이클타임 초
 
-    @Column(name = "equipment_code")
-    private String equipmentCode;
+    @Column(name = "cycle_time_gap_sec")
+    private Double cycleTimeGapSec; // 사이클타임 차이 초
 
-    @Column(name = "operation_rate")
-    private Double operationRate;
+    @Column(name = "timestamp_delay_sec")
+    private Double timestampDelaySec; // 이벤트 지연 시간 초
 
-    @Column(name = "cnt_value")
-    private Integer cntValue;
-
-    @Column(name = "current_rms")
-    private Double currentRms;
-
-    @Column(name = "vibration_value")
-    private Double vibrationValue;
-
-    @Column(name = "cycle_time")
-    private Double cycleTime;
-
-    @Column(name = "timestamp_delay")
-    private Double timestampDelay;
-
-    @Column(name = "threshold_value")
-    private Double thresholdValue;
-
-    @Column(name = "is_abnormal")
-    private Boolean isAbnormal;
-
-    @Column(name = "abnormal_type")
-    private String abnormalType;
-
-    @Column(name = "risk_score")
-    private Double riskScore;
-
-    @Column(name = "analyzed_at")
-    private LocalDateTime analyzedAt;
+    @OneToOne(fetch = FetchType.LAZY)
+    @MapsId
+    @JoinColumn(name = "analysis_result_id", nullable = false)
+    private ManufacturingAnalysisResult analysisResult;
 }

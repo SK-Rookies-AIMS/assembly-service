@@ -24,6 +24,7 @@ ext {
 	set('springdocOpenapiVersion', "3.0.3")
 	set('opensearchJavaVersion', "3.8.0")
 	set('jjwtVersion', "0.12.6")
+	set('awsMskIamAuthVersion', "2.3.7")
 }
 
 dependencies {
@@ -47,6 +48,7 @@ dependencies {
 
 	// Kafka
 	implementation 'org.springframework.kafka:spring-kafka'
+	implementation "software.amazon.msk:aws-msk-iam-auth:${awsMskIamAuthVersion}"
 
 	// OpenSearch
 	implementation "org.opensearch.client:opensearch-java:${opensearchJavaVersion}"
@@ -105,7 +107,7 @@ tasks.named('test') {
 	useJUnitPlatform()
 }
 
-def querydslDir = layout.buildDirectory.dir("generated/querydsl").get().asFile
+def querydslDir = layout.buildDirectory.dir("generated/sources/annotationProcessor/java/main").get().asFile
 
 sourceSets {
 	main {

@@ -22,13 +22,33 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: ${REDIS_TIMEOUT:3s}
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
   web:
     encoding:
       charset: UTF-8
       enabled: true
       force: true
+
+  kafka:
+    admin:
+      auto-create: false
+      fail-fast: false
+
+    bootstrap-servers: ${MSK_BOOTSTRAP_SERVERS}
+
+    properties:
+      security.protocol: SASL_SSL
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: software.amazon.msk.auth.iam.IAMLoginModule required;
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler
+
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+    consumer:
+      auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:earliest}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
 management:
   endpoint:
@@ -44,7 +64,7 @@ app:
   datasource:
     main:
       driver-class-name: ${MAIN_DB_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
-      jdbc-url: ${MAIN_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/maindb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8}
+      jdbc-url: ${MAIN_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/maindb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8&useSSL=false}
       username: ${MAIN_DB_USERNAME:admin}
       password: ${MAIN_DB_PASSWORD:}
       maximum-pool-size: ${MAIN_DB_MAXIMUM_POOL_SIZE:10}
@@ -52,24 +72,50 @@ app:
       pool-name: ${MAIN_DB_POOL_NAME:main-db-pool}
     sample:
       driver-class-name: ${SAMPLE_DB_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
-      jdbc-url: ${SAMPLE_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/sampledb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8}
+      jdbc-url: ${SAMPLE_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/sampledb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8&useSSL=false}
       username: ${SAMPLE_DB_USERNAME:admin}
       password: ${SAMPLE_DB_PASSWORD:}
       maximum-pool-size: ${SAMPLE_DB_MAXIMUM_POOL_SIZE:5}
       minimum-idle: ${SAMPLE_DB_MINIMUM_IDLE:1}
       pool-name: ${SAMPLE_DB_POOL_NAME:sample-db-pool}
+
   redis:
     cache:
       ttl: ${REDIS_CACHE_TTL:10m}
+
   opensearch:
     scheme: ${OPENSEARCH_SCHEME:http}
     host: ${OPENSEARCH_HOST:localhost}
     port: ${OPENSEARCH_PORT:9200}
+
   kafka:
-    bootstrap-servers:
-      - ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    group-id: ${KAFKA_GROUP_ID:assembly-local}
+    bootstrap-servers: ${MSK_BOOTSTRAP_SERVERS}
     auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:earliest}
+    listeners-enabled: ${KAFKA_LISTENERS_ENABLED:true}
+    scheduler:
+      enabled: ${KAFKA_REPLAY_SCHEDULER_ENABLED:false}
+      fixed-delay-ms: ${KAFKA_REPLAY_FIXED_DELAY_MS:5000}
+      batch-size: ${KAFKA_REPLAY_BATCH_SIZE:10}
+      max-retries: ${KAFKA_REPLAY_MAX_RETRIES:3}
+
+    security-protocol: SASL_SSL
+    sasl-mechanism: AWS_MSK_IAM
+    sasl-jaas-config: software.amazon.msk.auth.iam.IAMLoginModule required;
+    sasl-client-callback-handler-class: software.amazon.msk.auth.iam.IAMClientCallbackHandler
+
+    topics:
+      raw:
+        name: factory.manufacturing.raw
+        partitions: 2
+      analysis:
+        name: factory.manufacturing.analysis
+        partitions: 2
+      alert:
+        name: factory.manufacturing.alert
+        partitions: 2
+      equipment:
+        name: factory.equipment.status
+        partitions: 2
 
 logging:
   config: classpath:logback-spring.xml

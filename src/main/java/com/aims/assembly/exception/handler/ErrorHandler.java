@@ -12,4 +12,8 @@ public class ErrorHandler extends GeneralException {
     public ErrorHandler(BaseErrorCode code, String message) {
         super(code, message);
     }
+
+    public ErrorHandler(BaseErrorCode code, String message, Throwable cause) {
+        super(code, message, cause);
+    }
 }

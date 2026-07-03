@@ -1,52 +1,43 @@
 package com.aims.assembly.domain.body;
 
+import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
 import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
 
+@Entity
+@Table(name = "body_analysis_result")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor
+@Builder
 public class BodyAnalysisResult {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "analysis_result_id")
+    private Long analysisResultId; // 공통 분석 결과 ID, PK 겸 FK
 
-    @Column(name = "manufacturing_event_id")
-    private Long manufacturingEventId;
+    @Column(name = "robot_motion_status", length = 30)
+    private String robotMotionStatus; // 로봇 동작 상태
 
-    @Column(name = "car_master_id")
-    private Long carMasterId;
+    @Column(name = "robot_operation_mode", length = 30)
+    private String robotOperationMode; // 로봇 운전 모드
 
-    @Column(name = "process_code")
-    private String processCode;
+    @Column(name = "robot_vibration_score")
+    private Double robotVibrationScore; // 로봇 진동 점수
 
-    @Column(name = "equipment_code")
-    private String equipmentCode;
+    @Column(name = "frequency_peak_band", length = 30)
+    private String frequencyPeakBand; // 최대 진동 주파수 대역
 
-    @Column(name = "robot_current_rms")
-    private Double robotCurrentRms;
+    @Column(name = "frequency_peak_value")
+    private Double frequencyPeakValue; // 최대 진동 대역 값
 
-    @Column(name = "vibration_value")
-    private Double vibrationValue;
+    @Column(name = "frequency_bands_json", columnDefinition = "JSON")
+    private String frequencyBandsJson; // 주파수 대역별 진동값 JSON
 
-    @Column(name = "robot_motion_status")
-    private String robotMotionStatus;
-
-    @Column(name = "operation_rate")
-    private Double operationRate;
-
-    @Column(name = "threshold_value")
-    private Double thresholdValue;
-
-    @Column(name = "is_abnormal")
-    private Boolean isAbnormal;
-
-    @Column(name = "abnormal_type")
-    private String abnormalType;
-
-    @Column(name = "risk_score")
-    private Double riskScore;
-
-    @Column(name = "analyzed_at")
-    private LocalDateTime analyzedAt;
+    @OneToOne(fetch = FetchType.LAZY)
+    @MapsId
+    @JoinColumn(name = "analysis_result_id", nullable = false)
+    private ManufacturingAnalysisResult analysisResult;
 }

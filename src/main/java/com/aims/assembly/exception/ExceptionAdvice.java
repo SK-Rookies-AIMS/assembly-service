@@ -21,6 +21,8 @@ import java.nio.file.AccessDeniedException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 
 @Slf4j
 @RestControllerAdvice(annotations = RestController.class)
@@ -31,6 +33,22 @@ public class ExceptionAdvice extends ResponseEntityExceptionHandler {
         ErrorReasonDTO reason = exception.getErrorReasonHttpStatus();
         ApiResponse<Object> body = ApiResponse.failure(exception.getMessage(), null);
         return ResponseEntity.status(reason.getHttpStatus()).body(body);
+    }
+
+    @ExceptionHandler({CompletionException.class, ExecutionException.class})
+    public ResponseEntity<Object> handleAsyncException(Exception exception) {
+        Throwable cause = exception.getCause();
+        while (cause != null && cause.getCause() != null
+                && (cause instanceof CompletionException || cause instanceof ExecutionException)) {
+            cause = cause.getCause();
+        }
+
+        if (cause instanceof GeneralException generalException) {
+            return handleGeneralException(generalException);
+        }
+
+        log.error("Unhandled asynchronous exception", exception);
+        return handleError(ErrorStatus.INTERNAL_SERVER_ERROR, null);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
