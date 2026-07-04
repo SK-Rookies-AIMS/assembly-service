@@ -675,11 +675,17 @@ public class ManufacturingAnalysisResultService {
 
     private boolean bool(Object source, String... path) {
         Object val = value(source, path);
+        if (val instanceof String s) {
+            return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
+        }
         return val instanceof Boolean b && b;
     }
 
     private Boolean boolObj(Object source, String... path) {
         Object val = value(source, path);
+        if (val instanceof String s) {
+            return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
+        }
         return val instanceof Boolean b ? b : null;
     }
 

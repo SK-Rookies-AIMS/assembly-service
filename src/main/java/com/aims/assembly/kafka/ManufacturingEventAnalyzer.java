@@ -697,6 +697,9 @@ public class ManufacturingEventAnalyzer {
 
     private boolean bool(Map<String, Object> source, String... path) {
         Object value = value(source, path);
+        if (value instanceof String s) {
+            return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
+        }
         return value instanceof Boolean bool && bool;
     }
 
