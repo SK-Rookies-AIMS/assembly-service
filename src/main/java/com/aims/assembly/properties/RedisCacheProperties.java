@@ -8,7 +8,7 @@ import java.time.Duration;
 
 @Getter
 @Setter
-@ConfigurationProperties(prefix = "app.redis.cache")
+@ConfigurationProperties(prefix = "redis.cache")
 public class RedisCacheProperties {
 
     private Duration ttl = Duration.ofMinutes(10);
