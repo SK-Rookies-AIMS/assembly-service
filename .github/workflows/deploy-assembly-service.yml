@@ -22,11 +22,15 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
+  EKS_CLUSTER_NAME: aims-dev-eks
   ECR_REPOSITORY: aims/assembly-service
+  NAMESPACE: aims-project
 
   INFRA_REPOSITORY: SK-Rookies-AIMS/infra
   INFRA_BRANCH: dev
-  INFRA_MANIFEST_PATH: k8s/assembly-service/deployment.yaml
+
+  # 기존 deployment.yaml에서 kustomization.yaml로 변경
+  INFRA_MANIFEST_PATH: k8s/assembly-service/kustomization.yaml
 
 jobs:
   build-and-update-gitops:
@@ -65,6 +69,8 @@ jobs:
         id: build-image
         shell: bash
         run: |
+          set -euo pipefail
+
           COMMIT_TAG="dev-${GITHUB_SHA::12}"
 
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${COMMIT_TAG}"
@@ -89,11 +95,142 @@ jobs:
           path: infra
           fetch-depth: 0
 
-      - name: Update assembly-service image
+      # 추가: EKS 접속 설정
+      - name: Update kubeconfig and ensure namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws eks update-kubeconfig \
+            --region "$AWS_REGION" \
+            --name "$EKS_CLUSTER_NAME"
+
+          kubectl create namespace "$NAMESPACE" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+
+      # 추가: SSM Parameter Store 값 조회
+      - name: Load assembly-service parameters from SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RDS_SECRET_ARN=$(aws ssm get-parameter \
+            --name "/aims/dev/rds/secret-arn" \
+            --region "$AWS_REGION" \
+            --query "Parameter.Value" \
+            --output text)
+
+          RDS_HOST=$(aws ssm get-parameter \
+            --name "/aims/dev/backend/rds-host" \
+            --region "$AWS_REGION" \
+            --query "Parameter.Value" \
+            --output text)
+
+          RDS_PORT=$(aws ssm get-parameter \
+            --name "/aims/dev/backend/rds-port" \
+            --region "$AWS_REGION" \
+            --query "Parameter.Value" \
+            --output text)
+
+          MAIN_DB_NAME=$(aws ssm get-parameter \
+            --name "/aims/dev/backend/main-db-name" \
+            --region "$AWS_REGION" \
+            --query "Parameter.Value" \
+            --output text)
+
+          SAMPLE_DB_NAME=$(aws ssm get-parameter \
+            --name "/aims/dev/backend/sample-db-name" \
+            --region "$AWS_REGION" \
+            --query "Parameter.Value" \
+            --output text)
+
+          JWT_SECRET_KEY=$(aws ssm get-parameter \
+            --name "/aims/dev/backend/jwt-secret-key" \
+            --region "$AWS_REGION" \
+            --with-decryption \
+            --query "Parameter.Value" \
+            --output text)
+
+          for VALUE in \
+            "$RDS_SECRET_ARN" \
+            "$RDS_HOST" \
+            "$RDS_PORT" \
+            "$MAIN_DB_NAME" \
+            "$SAMPLE_DB_NAME" \
+            "$JWT_SECRET_KEY"
+          do
+            if [ -z "$VALUE" ] || [ "$VALUE" = "None" ]; then
+              echo "Required assembly-service parameter is empty"
+              exit 1
+            fi
+          done
+
+          echo "::add-mask::$RDS_SECRET_ARN"
+          echo "::add-mask::$JWT_SECRET_KEY"
+
+          {
+            echo "RDS_SECRET_ARN=$RDS_SECRET_ARN"
+            echo "RDS_HOST=$RDS_HOST"
+            echo "RDS_PORT=$RDS_PORT"
+            echo "MAIN_DB_NAME=$MAIN_DB_NAME"
+            echo "SAMPLE_DB_NAME=$SAMPLE_DB_NAME"
+            echo "JWT_SECRET_KEY=$JWT_SECRET_KEY"
+          } >> "$GITHUB_ENV"
+
+      # 추가: RDS Secrets Manager에서 계정 조회 후 런타임 Secret 생성
+      - name: Create or update assembly-service Secret
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SECRET_JSON=$(aws secretsmanager get-secret-value \
+            --secret-id "$RDS_SECRET_ARN" \
+            --region "$AWS_REGION" \
+            --query "SecretString" \
+            --output text)
+
+          DB_USER=$(echo "$SECRET_JSON" | jq -r '.username')
+          DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password')
+
+          if [ -z "$DB_USER" ] || [ "$DB_USER" = "null" ]; then
+            echo "DB username is missing"
+            exit 1
+          fi
+
+          if [ -z "$DB_PASSWORD" ] || [ "$DB_PASSWORD" = "null" ]; then
+            echo "DB password is missing"
+            exit 1
+          fi
+
+          echo "::add-mask::$DB_USER"
+          echo "::add-mask::$DB_PASSWORD"
+
+          JDBC_OPTIONS="serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true"
+
+          MAIN_DB_JDBC_URL="jdbc:mysql://${RDS_HOST}:${RDS_PORT}/${MAIN_DB_NAME}?${JDBC_OPTIONS}"
+          SAMPLE_DB_JDBC_URL="jdbc:mysql://${RDS_HOST}:${RDS_PORT}/${SAMPLE_DB_NAME}?${JDBC_OPTIONS}"
+
+          kubectl create secret generic assembly-service-secret \
+            --namespace "$NAMESPACE" \
+            --from-literal=MAIN_DB_JDBC_URL="$MAIN_DB_JDBC_URL" \
+            --from-literal=MAIN_DB_USERNAME="$DB_USER" \
+            --from-literal=MAIN_DB_PASSWORD="$DB_PASSWORD" \
+            --from-literal=SAMPLE_DB_JDBC_URL="$SAMPLE_DB_JDBC_URL" \
+            --from-literal=SAMPLE_DB_USERNAME="$DB_USER" \
+            --from-literal=SAMPLE_DB_PASSWORD="$DB_PASSWORD" \
+            --from-literal=JWT_SECRET_KEY="$JWT_SECRET_KEY" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+
+      # 변경: image: 전체 URI가 아니라 newTag:만 변경
+      - name: Update assembly-service image tag
         env:
           IMAGE_URI: ${{ steps.build-image.outputs.image_uri }}
         shell: bash
         run: |
+          set -euo pipefail
+
           MANIFEST="infra/${INFRA_MANIFEST_PATH}"
 
           if [ ! -f "$MANIFEST" ]; then
@@ -101,15 +238,19 @@ jobs:
             exit 1
           fi
 
+          IMAGE_TAG="${IMAGE_URI##*:}"
+
           sed -i -E \
-            "s|^([[:space:]]*)image:.*aims/assembly-service.*$|\1image: ${IMAGE_URI}|" \
+            "s|^([[:space:]]*)newTag:.*$|\1newTag: ${IMAGE_TAG}|" \
             "$MANIFEST"
 
-          grep -n "image:" "$MANIFEST"
+          grep -n "newTag:" "$MANIFEST"
 
       - name: Commit and push GitOps change
         shell: bash
         run: |
+          set -euo pipefail
+
           cd infra
 
           git config user.name "github-actions[bot]"
