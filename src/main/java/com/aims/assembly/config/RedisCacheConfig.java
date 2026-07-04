@@ -2,8 +2,12 @@ package com.aims.assembly.config;
 
 import com.aims.assembly.properties.RedisCacheProperties;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.CachingConfigurer;
 import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.cache.interceptor.CacheErrorHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
@@ -16,10 +20,13 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
+import java.time.Duration;
+
 @EnableCaching
 @Configuration
 @RequiredArgsConstructor
-public class RedisCacheConfig {
+@Slf4j
+public class RedisCacheConfig implements CachingConfigurer {
 
     private final RedisCacheProperties redisCacheProperties;
 
@@ -35,7 +42,42 @@ public class RedisCacheConfig {
                 .cacheDefaults(cacheConfig)
                 .withCacheConfiguration("press-anomaly-dashboard-v2", cacheConfig)
                 .withCacheConfiguration("body-anomaly-dashboard-v2", cacheConfig)
+                .withCacheConfiguration("process-paint-dashboard-v1",
+                        cacheConfig.entryTtl(Duration.ofMinutes(3)))
+                .withCacheConfiguration("process-assembly-dashboard-v1",
+                        cacheConfig.entryTtl(Duration.ofMinutes(3)))
+                .withCacheConfiguration("process-paint-dates-v1",
+                        cacheConfig.entryTtl(Duration.ofMinutes(10)))
+                .withCacheConfiguration("process-assembly-dates-v1",
+                        cacheConfig.entryTtl(Duration.ofMinutes(10)))
+                .withCacheConfiguration("process-equipment-operation-rate-v1",
+                        cacheConfig.entryTtl(Duration.ofSeconds(20)))
                 .build();
+    }
+
+    @Override
+    public CacheErrorHandler errorHandler() {
+        return new CacheErrorHandler() {
+            @Override
+            public void handleCacheGetError(RuntimeException exception, Cache cache, Object key) {
+                log.warn("Redis cache get failed. cache={}, key={}", cache.getName(), key, exception);
+            }
+
+            @Override
+            public void handleCachePutError(RuntimeException exception, Cache cache, Object key, Object value) {
+                log.warn("Redis cache put failed. cache={}, key={}", cache.getName(), key, exception);
+            }
+
+            @Override
+            public void handleCacheEvictError(RuntimeException exception, Cache cache, Object key) {
+                log.warn("Redis cache evict failed. cache={}, key={}", cache.getName(), key, exception);
+            }
+
+            @Override
+            public void handleCacheClearError(RuntimeException exception, Cache cache) {
+                log.warn("Redis cache clear failed. cache={}", cache.getName(), exception);
+            }
+        };
     }
 
     @Bean

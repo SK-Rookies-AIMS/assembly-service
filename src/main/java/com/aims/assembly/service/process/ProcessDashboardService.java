@@ -14,6 +14,7 @@ import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
 import com.aims.assembly.repository.equipment.EquipmentOperationRateRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,6 +44,7 @@ public class ProcessDashboardService {
     private final AssemblyAnalysisResultRepository assemblyRepository;
     private final EquipmentOperationRateRepository equipmentOperationRateRepository;
 
+    @Cacheable(cacheNames = "process-equipment-operation-rate-v1", key = "'all'")
     public EquipmentOperationRateResponse getEquipmentOperationRate() {
         Map<ProcessCode, EnumMap<EquipmentOperationStatus, Long>> countsByProcess =
                 initialEquipmentStatusCounts();
@@ -59,6 +61,13 @@ public class ProcessDashboardService {
         ));
     }
 
+    @Cacheable(
+            cacheNames = "process-paint-dashboard-v1",
+            key = "'date:' + (#date == null ? 'null' : #date.toString())"
+                    + " + ':from:' + (#from == null ? 'null' : #from.toString())"
+                    + " + ':to:' + (#to == null ? 'null' : #to.toString())"
+                    + " + ':limit:' + (#limit == null ? 30 : T(java.lang.Math).max(1, T(java.lang.Math).min(#limit, 200)))"
+    )
     public PaintDashboardResponse getPaintDashboard(
             LocalDate date,
             LocalDateTime from,
@@ -122,6 +131,13 @@ public class ProcessDashboardService {
         return new PaintDashboardResponse(range.selectedDate(), summary, chart, paintAlert(alertRow));
     }
 
+    @Cacheable(
+            cacheNames = "process-assembly-dashboard-v1",
+            key = "'date:' + (#date == null ? 'null' : #date.toString())"
+                    + " + ':from:' + (#from == null ? 'null' : #from.toString())"
+                    + " + ':to:' + (#to == null ? 'null' : #to.toString())"
+                    + " + ':limit:' + (#limit == null ? 30 : T(java.lang.Math).max(1, T(java.lang.Math).min(#limit, 200)))"
+    )
     public AssemblyDashboardResponse getAssemblyDashboard(
             LocalDate date,
             LocalDateTime from,
@@ -195,10 +211,12 @@ public class ProcessDashboardService {
         return new AssemblyDashboardResponse(range.selectedDate(), summary, vehicles, assemblyAlert(alertRow));
     }
 
+    @Cacheable(cacheNames = "process-paint-dates-v1", key = "'all'")
     public ProcessAvailableDatesResponse getPaintDates() {
         return ProcessAvailableDatesResponse.of(availablePaintDates());
     }
 
+    @Cacheable(cacheNames = "process-assembly-dates-v1", key = "'all'")
     public ProcessAvailableDatesResponse getAssemblyDates() {
         return ProcessAvailableDatesResponse.of(availableAssemblyDates());
     }
