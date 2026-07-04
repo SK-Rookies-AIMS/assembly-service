@@ -5,11 +5,7 @@ import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.domain.enums.Severity;
 import com.aims.assembly.kafka.ManufacturingEventAnalyzer;
 import com.aims.assembly.properties.KafkaCustomProperties;
-import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
-import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
-import com.aims.assembly.repository.analysis.ManufacturingAnalysisResultRepository;
-import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
-import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
+import com.aims.assembly.repository.analysis.ManufacturingAnalysisQueryRepository;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
 import org.junit.jupiter.api.Test;
 
@@ -21,25 +17,21 @@ import static org.mockito.Mockito.*;
 
 class ManufacturingAnalysisResultQueryServiceTest {
 
-    private final ManufacturingAnalysisResultRepository repository =
-            mock(ManufacturingAnalysisResultRepository.class);
+    private final ManufacturingAnalysisQueryRepository queryRepository =
+            mock(ManufacturingAnalysisQueryRepository.class);
     private final ManufacturingEventJsonRepository eventRepository =
             mock(ManufacturingEventJsonRepository.class);
     private final ManufacturingAnalysisResultQueryService service =
             new ManufacturingAnalysisResultQueryService(
-                    repository,
+                    queryRepository,
                     eventRepository,
                     mock(ManufacturingEventAnalyzer.class),
-                    new KafkaCustomProperties(),
-                    mock(PressAnalysisResultRepository.class),
-                    mock(BodyAnalysisResultRepository.class),
-                    mock(PaintAnalysisResultRepository.class),
-                    mock(AssemblyAnalysisResultRepository.class)
+                    new KafkaCustomProperties()
             );
 
     @Test
     void identifiesFinalCompletedCarWhenAllProcessesAreNormal() {
-        when(repository.findByCarMasterIdOrderByEventTimeAscAnalyzedAtAsc(700L))
+        when(queryRepository.findByCarMasterId(700L))
                 .thenReturn(List.of(
                         result("A1", "E1", ProcessCode.PRESS),
                         result("A2", "E2", ProcessCode.BODY),
@@ -57,7 +49,7 @@ class ManufacturingAnalysisResultQueryServiceTest {
 
     @Test
     void marksCarAbnormalWhenAnyProcessIsAbnormal() {
-        when(repository.findByCarMasterIdOrderByEventTimeAscAnalyzedAtAsc(700L))
+        when(queryRepository.findByCarMasterId(700L))
                 .thenReturn(List.of(
                         result("A1", "E1", ProcessCode.PRESS),
                         ManufacturingAnalysisResult.builder()

@@ -4,14 +4,13 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: ${REDIS_TIMEOUT:3s}
-app:
-  redis:
-    cache:
-      ttl: ${REDIS_CACHE_TTL:30m}
-  opensearch:
-    scheme: ${OPENSEARCH_SCHEME:http}
-    host: ${OPENSEARCH_HOST:localhost}
-    port: ${OPENSEARCH_PORT:9200}
+redis:
+  cache:
+    ttl: ${REDIS_CACHE_TTL:30m}
+opensearch:
+  scheme: ${OPENSEARCH_SCHEME:http}
+  host: ${OPENSEARCH_HOST:localhost}
+  port: ${OPENSEARCH_PORT:9200}
 
 logging:
   level:

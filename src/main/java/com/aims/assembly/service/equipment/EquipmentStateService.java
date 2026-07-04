@@ -6,6 +6,7 @@ import com.aims.assembly.kafka.model.EquipmentStatusEvent;
 import com.aims.assembly.repository.equipment.EquipmentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +23,7 @@ public class EquipmentStateService {
     private final ApplicationEventPublisher eventPublisher;
 
     @Transactional("sampleTransactionManager")
+    @CacheEvict(cacheNames = "process-equipment-operation-rate-v1", allEntries = true)
     public EquipmentStatusEvent recover(String equipmentCode, String reason) {
         Equipment equipment = equipmentRepository.findByEquipmentCode(equipmentCode)
                 .orElseThrow(() -> new IllegalArgumentException("Equipment not found: " + equipmentCode));
@@ -34,6 +36,7 @@ public class EquipmentStateService {
     }
 
     @Transactional("sampleTransactionManager")
+    @CacheEvict(cacheNames = "process-equipment-operation-rate-v1", allEntries = true)
     public void applyStatusEvent(EquipmentStatusEvent event) {
         EquipmentOperationStatus operationStatus = EquipmentOperationStatus.from(event.operationStatus())
                 .orElse(null);

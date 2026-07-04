@@ -1,15 +1,12 @@
 package com.aims.assembly.service.manufacturing;
 
 import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
-import com.aims.assembly.domain.assembly.AssemblyAnalysisResult;
-import com.aims.assembly.domain.body.BodyAnalysisResult;
 import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.domain.enums.Severity;
-import com.aims.assembly.domain.paint.PaintAnalysisResult;
-import com.aims.assembly.domain.press.PressAnalysisResult;
 import com.aims.assembly.kafka.ManufacturingEventAnalyzer;
 import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
+import com.aims.assembly.mapper.ManufacturingAnalysisResultMapper;
 import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.ManufacturingAnalysisResultRepository;
@@ -52,7 +49,15 @@ public class ManufacturingAnalysisResultService {
      * <p>새 분석 결과 저장 시 이상 탐지 대시보드 캐시를 무효화한다.
      */
     @Transactional
-    @CacheEvict(cacheNames = {"press-anomaly-dashboard-v2", "body-anomaly-dashboard-v2", "paint-anomaly-dashboard-v2"}, allEntries = true)
+    @CacheEvict(cacheNames = {
+            "press-anomaly-dashboard-v2",
+            "body-anomaly-dashboard-v2",
+            "paint-anomaly-dashboard-v2",
+            "process-paint-dashboard-v1",
+            "process-assembly-dashboard-v1",
+            "process-paint-dates-v1",
+            "process-assembly-dates-v1"
+    }, allEntries = true)
     public void save(ManufacturingRawEvent raw, ManufacturingAnalysisEvent analysis) {
         var result = analysis.analysisResult();
         LocalDateTime eventTime = raw.eventTime();
@@ -86,20 +91,20 @@ public class ManufacturingAnalysisResultService {
                 calculateAssemblyRiskOverride(detailProcessCode, detailJson, analysis);
 
         ManufacturingAnalysisResult savedResult = repository.saveAndFlush(
-                ManufacturingAnalysisResult.builder()
-                        .analysisId(analysis.analysisId())
-                        .eventId(analysis.eventId())
-                        .carMasterId(carMasterId)
-                        .equipmentId(equipmentId)
-                        .processCode(raw.processCode())
-                        .eventTime(eventTime)
-                        .isAbnormal(assemblyRiskOverride.isAbnormal())
-                        .abnormalType(assemblyRiskOverride.abnormalType())
-                        .severity(assemblyRiskOverride.severity())
-                        .riskScore(assemblyRiskOverride.riskScore())
-                        .analysisMessage(analysis.reason() == null ? null : analysis.reason().mainReason())
-                        .analyzedAt(analysis.analyzedAt())
-                        .build()
+                ManufacturingAnalysisResultMapper.toManufacturingAnalysisResult(
+                        analysis.analysisId(),
+                        analysis.eventId(),
+                        carMasterId,
+                        equipmentId,
+                        raw.processCode(),
+                        eventTime,
+                        assemblyRiskOverride.isAbnormal(),
+                        assemblyRiskOverride.abnormalType(),
+                        assemblyRiskOverride.severity(),
+                        assemblyRiskOverride.riskScore(),
+                        analysis.reason() == null ? null : analysis.reason().mainReason(),
+                        analysis.analyzedAt()
+                )
         );
 
         // 공정별 결과 저장 (같은 트랜잭션)
@@ -232,14 +237,14 @@ public class ManufacturingAnalysisResultService {
                         cycleTimeGapSec);
 
                 pressRepository.save(
-                        PressAnalysisResult.builder()
-                                .analysisResult(savedResult)
-                                .countIncreaseYn(countIncrease)
-                                .targetCycleTimeSec(targetCycleTime)
-                                .actualCycleTimeSec(actualCycleTime)
-                                .cycleTimeGapSec(cycleTimeGapSec)
-                                .timestampDelaySec(timestampDelaySec)
-                                .build()
+                        ManufacturingAnalysisResultMapper.toPressAnalysisResult(
+                                savedResult,
+                                countIncrease,
+                                targetCycleTime,
+                                actualCycleTime,
+                                cycleTimeGapSec,
+                                timestampDelaySec
+                        )
                 );
             }
             case BODY -> {
@@ -332,15 +337,15 @@ public class ManufacturingAnalysisResultService {
                         frequencyBandsJson);
 
                 bodyRepository.save(
-                        BodyAnalysisResult.builder()
-                                .analysisResult(savedResult)
-                                .robotMotionStatus(robotMotionStatus != null ? robotMotionStatus : (savedResult.getIsAbnormal() ? "ABNORMAL" : "NORMAL"))
-                                .robotOperationMode(robotOperationMode)
-                                .robotVibrationScore(robotVibrationScore)
-                                .frequencyPeakBand(frequencyPeakBand)
-                                .frequencyPeakValue(frequencyPeakValue)
-                                .frequencyBandsJson(frequencyBandsJson)
-                                .build()
+                        ManufacturingAnalysisResultMapper.toBodyAnalysisResult(
+                                savedResult,
+                                robotMotionStatus != null ? robotMotionStatus : (savedResult.getIsAbnormal() ? "ABNORMAL" : "NORMAL"),
+                                robotOperationMode,
+                                robotVibrationScore,
+                                frequencyPeakBand,
+                                frequencyPeakValue,
+                                frequencyBandsJson
+                        )
                 );
             }
             case PAINT -> {
@@ -421,15 +426,15 @@ public class ManufacturingAnalysisResultService {
                         paintValues.thicknessValue());
 
                 paintRepository.save(
-                        PaintAnalysisResult.builder()
-                                .analysisResult(savedResult)
-                                .defectScore(paintValues.defectScore())
-                                .thermalStdTemp(paintValues.thermalStdTemp())
-                                .surfaceQualityScore(paintValues.surfaceQualityScore())
-                                .visionLabel(paintValues.visionLabel())
-                                .imagePosition(paintValues.imagePosition())
-                                .thicknessValue(paintValues.thicknessValue())
-                                .build()
+                        ManufacturingAnalysisResultMapper.toPaintAnalysisResult(
+                                savedResult,
+                                paintValues.defectScore(),
+                                paintValues.thermalStdTemp(),
+                                paintValues.surfaceQualityScore(),
+                                paintValues.visionLabel(),
+                                paintValues.imagePosition(),
+                                paintValues.thicknessValue()
+                        )
                 );
             }
             case ASSEMBLY -> {
@@ -460,14 +465,14 @@ public class ManufacturingAnalysisResultService {
                         assemblyValues.fasteningErrorCount());
 
                 assemblyRepository.save(
-                        AssemblyAnalysisResult.builder()
-                                .analysisResult(savedResult)
-                                .expectedSequence(assemblyValues.expectedSequence())
-                                .actualSequence(assemblyValues.actualSequence())
-                                .sequenceErrorCount(assemblyValues.sequenceErrorCount())
-                                .missingPartCount(assemblyValues.missingPartCount())
-                                .fasteningErrorCount(assemblyValues.fasteningErrorCount())
-                                .build()
+                        ManufacturingAnalysisResultMapper.toAssemblyAnalysisResult(
+                                savedResult,
+                                assemblyValues.expectedSequence(),
+                                assemblyValues.actualSequence(),
+                                assemblyValues.sequenceErrorCount(),
+                                assemblyValues.missingPartCount(),
+                                assemblyValues.fasteningErrorCount()
+                        )
                 );
             }
         }
@@ -678,11 +683,23 @@ public class ManufacturingAnalysisResultService {
 
     private boolean bool(Object source, String... path) {
         Object val = value(source, path);
+        if (val instanceof String s) {
+            return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
+        }
+        if (val instanceof Number n) {
+            return n.intValue() == 1;
+        }
         return val instanceof Boolean b && b;
     }
 
     private Boolean boolObj(Object source, String... path) {
         Object val = value(source, path);
+        if (val instanceof String s) {
+            return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
+        }
+        if (val instanceof Number n) {
+            return n.intValue() == 1;
+        }
         return val instanceof Boolean b ? b : null;
     }
 

@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @Getter
 @Setter
-@ConfigurationProperties(prefix = "app.opensearch")
+@ConfigurationProperties(prefix = "opensearch")
 public class OpenSearchProperties {
 
     private String scheme = "http";

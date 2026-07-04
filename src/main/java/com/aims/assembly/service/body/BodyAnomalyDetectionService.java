@@ -2,6 +2,7 @@ package com.aims.assembly.service.body;
 
 import com.aims.assembly.domain.body.BodyAnalysisResult;
 import com.aims.assembly.dto.body.BodyAnomalyDetectionResponse;
+import com.aims.assembly.mapper.BodyAnomalyDetectionResponseMapper;
 import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -99,7 +100,7 @@ public class BodyAnomalyDetectionService {
         BodyAnalysisResult summaryResult = summaryPoint == null ? null
                 : repository.findByAnalysisResult_AnalysisId(summaryPoint.analysisId()).orElse(null);
 
-        return new BodyAnomalyDetectionResponse(
+        BodyAnomalyDetectionResponse response = BodyAnomalyDetectionResponseMapper.toResponse(
                 targetDate,
                 rangeFrom,
                 rangeTo,
@@ -109,11 +110,20 @@ public class BodyAnomalyDetectionService {
                 points,
                 toAlert(points, detected, summaryResult)
         );
+        log.info(
+                "차체 이상 탐지 대시보드 조회 완료: date={}, from={}, to={}, 건수={}, 탐지여부={}",
+                targetDate,
+                rangeFrom,
+                rangeTo,
+                points.size(),
+                detected
+        );
+        return response;
     }
 
     private List<BodyAnomalyDetectionResponse.DateOption> dateOptions() {
         return repository.findBodyAnalysisDateOptions().stream()
-                .map(option -> new BodyAnomalyDetectionResponse.DateOption(
+                .map(option -> BodyAnomalyDetectionResponseMapper.toDateOption(
                         option.getDate(),
                         option.getSampleEventId()
                 ))
@@ -155,15 +165,21 @@ public class BodyAnomalyDetectionService {
             }
         }
         
-        return new BodyAnomalyDetectionResponse.ChartPoint(
+        boolean isAbnormal = Boolean.TRUE.equals(analysis.getIsAbnormal()) || (analysis.getRiskScore() != null && analysis.getRiskScore() >= 30.0);
+        String severity = analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name();
+        if (isAbnormal && "NORMAL".equals(severity)) {
+            severity = "WARNING";
+        }
+
+        return BodyAnomalyDetectionResponseMapper.toChartPoint(
                 analysis.getEventId(),
                 analysis.getAnalysisId(),
                 analysis.getEventTime(),
                 vibrationScore,
                 toDisplayPeakValue(peakValue),
                 analysis.getRiskScore(),
-                Boolean.TRUE.equals(analysis.getIsAbnormal()),
-                analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name()
+                isAbnormal,
+                severity
         );
     }
 
@@ -185,7 +201,7 @@ public class BodyAnomalyDetectionService {
             }
             
             if (bodyData != null) {
-                return new BodyAnomalyDetectionResponse.Metrics(
+                return BodyAnomalyDetectionResponseMapper.toMetrics(
                         bodyData.robotMotionStatus,
                         bodyData.robotOperationMode != null ? bodyData.robotOperationMode : "NORMAL",
                         null,
@@ -197,11 +213,11 @@ public class BodyAnomalyDetectionService {
                         bodyData.frequencyBands != null ? bodyData.frequencyBands : new HashMap<>()
                 );
             }
-            return new BodyAnomalyDetectionResponse.Metrics(
+            return BodyAnomalyDetectionResponseMapper.toMetrics(
                     null, "NORMAL", null, null, null, maxRiskScore, "0-100", severity, new HashMap<>()
             );
         }
-        return new BodyAnomalyDetectionResponse.Metrics(
+        return BodyAnomalyDetectionResponseMapper.toMetrics(
                 result.getRobotMotionStatus(),
                 result.getRobotOperationMode() != null ? result.getRobotOperationMode() : "NORMAL",
                 result.getRobotVibrationScore(),
@@ -239,9 +255,7 @@ public class BodyAnomalyDetectionService {
             BodyAnalysisResult summaryResult
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return new BodyAnomalyDetectionResponse.AlertPanel(
-                    false, "차체 이상 미탐지", List.of()
-            );
+            return BodyAnomalyDetectionResponseMapper.toAlert(false, "차체 이상 미탐지", List.of());
         }
 
         List<String> reasons = new ArrayList<>();
@@ -286,7 +300,7 @@ public class BodyAnomalyDetectionService {
             reasons.add(String.format("최대 진동 점수: %.2f", maxVibrationScore));
         }
 
-        return new BodyAnomalyDetectionResponse.AlertPanel(true, "차체 이상 탐지", List.copyOf(reasons));
+        return BodyAnomalyDetectionResponseMapper.toAlert(true, "차체 이상 탐지", List.copyOf(reasons));
     }
 
     private Double toDisplayPeakValue(Double rawValue) {
