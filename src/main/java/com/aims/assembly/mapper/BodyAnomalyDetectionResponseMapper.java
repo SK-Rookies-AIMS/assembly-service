@@ -57,6 +57,12 @@ public final class BodyAnomalyDetectionResponseMapper {
 
     public static BodyAnomalyDetectionResponse.ChartPoint toChartPoint(BodyAnalysisResult result, Double frequencyPeakValue) {
         var analysis = result.getAnalysisResult();
+        boolean isAbnormal = Boolean.TRUE.equals(analysis.getIsAbnormal()) || (analysis.getRiskScore() != null && analysis.getRiskScore() >= 30.0);
+        String severity = analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name();
+        if (isAbnormal && "NORMAL".equals(severity)) {
+            severity = "WARNING";
+        }
+
         return new BodyAnomalyDetectionResponse.ChartPoint(
                 analysis.getEventId(),
                 analysis.getAnalysisId(),
@@ -64,8 +70,8 @@ public final class BodyAnomalyDetectionResponseMapper {
                 result.getRobotVibrationScore(),
                 frequencyPeakValue,
                 analysis.getRiskScore(),
-                Boolean.TRUE.equals(analysis.getIsAbnormal()),
-                analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name()
+                isAbnormal,
+                severity
         );
     }
 
