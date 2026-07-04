@@ -141,6 +141,14 @@ public class ManufacturingKafkaProducer {
                             eventId,
                             message
                     );
+                    log.info(
+                            "카프카 이벤트 발행 완료: topic={}, eventId={}, key={}, partition={}, offset={}",
+                            result.getRecordMetadata().topic(),
+                            eventId,
+                            key,
+                            result.getRecordMetadata().partition(),
+                            result.getRecordMetadata().offset()
+                    );
 
                     return new KafkaPublishResult(
                             result.getRecordMetadata().topic(),

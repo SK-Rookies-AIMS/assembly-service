@@ -1,6 +1,8 @@
 package com.aims.assembly.config.jwt;
 
 import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -14,6 +16,8 @@ public class JwtProperties {
 
     @Getter
     @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class Expiration {
 
         private long access = 3_600_000L;

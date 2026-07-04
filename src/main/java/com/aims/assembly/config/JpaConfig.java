@@ -24,6 +24,7 @@ import java.util.Map;
 public class JpaConfig {
 
     private static final String DOMAIN_PACKAGE = "com.aims.assembly.domain";
+    private static final String KOREA_TIME_ZONE = "Asia/Seoul";
 
     private static final List<String> SAMPLE_ENTITY_CLASS_NAMES = List.of(
             CarMaster.class.getName(),
@@ -88,6 +89,7 @@ public class JpaConfig {
         Map<String, Object> properties = new HashMap<>();
         properties.put("hibernate.hbm2ddl.auto", ddlAuto);
         properties.put("hibernate.format_sql", formatSql);
+        properties.put("hibernate.jdbc.time_zone", KOREA_TIME_ZONE);
         return properties;
     }
 }
