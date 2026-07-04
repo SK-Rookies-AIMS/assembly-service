@@ -20,15 +20,38 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.data.redis.connection.RedisConnection;
 import java.time.Duration;
 
+@Slf4j
 @EnableCaching
 @Configuration
 @RequiredArgsConstructor
-@Slf4j
 public class RedisCacheConfig implements CachingConfigurer {
 
     private final RedisCacheProperties redisCacheProperties;
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void checkRedisConnection(ApplicationReadyEvent event) {
+        try {
+            RedisConnectionFactory factory = event.getApplicationContext().getBean(RedisConnectionFactory.class);
+            RedisConnection connection = factory.getConnection();
+            String ping = connection.ping();
+            log.info("Redis connection successful! Ping response: {}", ping);
+            connection.close();
+        } catch (Exception e) {
+            log.error("Failed to connect to Redis: {}", e.getMessage());
+            
+            // Log environment variables to see if .env is loaded
+            String redisHost = event.getApplicationContext().getEnvironment().getProperty("spring.data.redis.host");
+            String redisPort = event.getApplicationContext().getEnvironment().getProperty("spring.data.redis.port");
+            String oldRedisHost = event.getApplicationContext().getEnvironment().getProperty("spring.redis.host");
+            String oldRedisPort = event.getApplicationContext().getEnvironment().getProperty("spring.redis.port");
+            log.error("Configured properties - spring.data.redis: {}:{}, spring.redis: {}:{}", redisHost, redisPort, oldRedisHost, oldRedisPort);
+        }
+    }
 
     @Bean
     public CacheManager cacheManager(RedisConnectionFactory redisConnectionFactory) {

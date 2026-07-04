@@ -24,6 +24,10 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: ${REDIS_TIMEOUT:3s}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    timeout: ${REDIS_TIMEOUT:3s}
   web:
     encoding:
       charset: UTF-8
