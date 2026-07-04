@@ -354,8 +354,8 @@ public class ManufacturingEventAnalyzer {
                 double cycleOverTargetSec = Math.max(0, cycleTimeSec - targetCycleTimeSec);
                 
                 double score = clamp(
-                        Math.min(40.0, stationDelaySec * 4.0)
-                        + Math.min(35.0, cycleOverTargetSec * 3.0)
+                        Math.min(40.0, stationDelaySec * 2.0)
+                        + Math.min(35.0, cycleOverTargetSec * 1.5)
                         + Math.min(20.0, Math.max(0.0, rmsAmpere - 1.5) * 8.0)
                         + (countIncrease ? 0.0 : 20.0)
                 );
@@ -683,7 +683,7 @@ public class ManufacturingEventAnalyzer {
     }
 
     private double clamp(double score) {
-        return Math.max(0, Math.min(100, score));
+        return Math.max(0.0, Math.min(99.0, score));
     }
 
     private double round(double score) {
@@ -699,6 +699,9 @@ public class ManufacturingEventAnalyzer {
         Object value = value(source, path);
         if (value instanceof String s) {
             return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
+        }
+        if (value instanceof Number n) {
+            return n.intValue() == 1;
         }
         return value instanceof Boolean bool && bool;
     }

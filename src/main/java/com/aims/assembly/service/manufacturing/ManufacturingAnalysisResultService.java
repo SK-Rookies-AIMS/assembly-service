@@ -678,6 +678,9 @@ public class ManufacturingAnalysisResultService {
         if (val instanceof String s) {
             return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
         }
+        if (val instanceof Number n) {
+            return n.intValue() == 1;
+        }
         return val instanceof Boolean b && b;
     }
 
@@ -685,6 +688,9 @@ public class ManufacturingAnalysisResultService {
         Object val = value(source, path);
         if (val instanceof String s) {
             return "Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s);
+        }
+        if (val instanceof Number n) {
+            return n.intValue() == 1;
         }
         return val instanceof Boolean b ? b : null;
     }
