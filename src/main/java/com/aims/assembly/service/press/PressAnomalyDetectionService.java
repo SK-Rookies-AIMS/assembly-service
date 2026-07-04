@@ -2,9 +2,11 @@ package com.aims.assembly.service.press;
 
 import com.aims.assembly.domain.press.PressAnalysisResult;
 import com.aims.assembly.dto.press.PressAnomalyDetectionResponse;
+import com.aims.assembly.mapper.PressAnomalyDetectionResponseMapper;
 import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -19,6 +21,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class PressAnomalyDetectionService {
@@ -84,7 +87,7 @@ public class PressAnomalyDetectionService {
                 .max()
                 .orElse(summaryPoint != null && summaryPoint.riskScore() != null ? summaryPoint.riskScore() : 0.0);
 
-        return new PressAnomalyDetectionResponse(
+        PressAnomalyDetectionResponse response = PressAnomalyDetectionResponseMapper.toResponse(
                 targetDate,
                 rangeFrom,
                 rangeTo,
@@ -94,11 +97,20 @@ public class PressAnomalyDetectionService {
                 points,
                 toAlert(points, detected)
         );
+        log.info(
+                "프레스 이상 탐지 대시보드 조회 완료: date={}, from={}, to={}, 건수={}, 탐지여부={}",
+                targetDate,
+                rangeFrom,
+                rangeTo,
+                points.size(),
+                detected
+        );
+        return response;
     }
 
     private List<PressAnomalyDetectionResponse.DateOption> dateOptions() {
         return repository.findPressAnalysisDateOptions().stream()
-                .map(option -> new PressAnomalyDetectionResponse.DateOption(
+                .map(option -> PressAnomalyDetectionResponseMapper.toDateOption(
                         option.getDate(),
                         option.getSampleEventId()
                 ))
@@ -121,19 +133,7 @@ public class PressAnomalyDetectionService {
 
     private PressAnomalyDetectionResponse.ChartPoint toChartPoint(PressAnalysisResult result) {
         var analysis = result.getAnalysisResult();
-        return new PressAnomalyDetectionResponse.ChartPoint(
-                analysis.getEventId(),
-                analysis.getAnalysisId(),
-                analysis.getEventTime(),
-                safeNumber(result.getTargetCycleTimeSec()),
-                safeNumber(result.getActualCycleTimeSec()),
-                safeNumber(result.getCycleTimeGapSec()),
-                safeNumber(result.getTimestampDelaySec()),
-                safeNumber(analysis.getRiskScore()),
-                result.getCountIncreaseYn(),
-                Boolean.TRUE.equals(analysis.getIsAbnormal()),
-                analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name()
-        );
+        return PressAnomalyDetectionResponseMapper.toChartPoint(result);
     }
 
     private PressAnomalyDetectionResponse.Metrics toMetrics(
@@ -142,19 +142,16 @@ public class PressAnomalyDetectionService {
             double maxRiskScore
     ) {
         if (point == null) {
-            return new PressAnomalyDetectionResponse.Metrics(
-                    0.0, 0.0, 0.0, 0.0, maxRiskScore, "0-100", detected ? "WARNING" : "NORMAL"
+            return PressAnomalyDetectionResponseMapper.toMetrics(
+                    new PressAnomalyDetectionResponse.ChartPoint(
+                            null, null, null,
+                            0.0, 0.0, 0.0, 0.0,
+                            maxRiskScore, null, null,
+                            detected ? "WARNING" : "NORMAL"
+                    )
             );
         }
-        return new PressAnomalyDetectionResponse.Metrics(
-                safeNumber(point.targetCycleTimeSec()),
-                safeNumber(point.actualCycleTimeSec()),
-                safeNumber(point.cycleTimeGapSec()),
-                safeNumber(point.timestampDelaySec()),
-                maxRiskScore,
-                "0-100",
-                detected ? "WARNING" : (point.severity() == null ? "NORMAL" : point.severity())
-        );
+        return PressAnomalyDetectionResponseMapper.toMetrics(point);
     }
 
     private PressAnomalyDetectionResponse.AlertPanel toAlert(
@@ -162,11 +159,7 @@ public class PressAnomalyDetectionService {
             boolean detected
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return new PressAnomalyDetectionResponse.AlertPanel(
-                    false,
-                    "프레스 이상 정지 미탐지",
-                    List.of()
-            );
+            return PressAnomalyDetectionResponseMapper.toAlert(false, "프레스 이상 정지 미탐지", List.of());
         }
 
         int countIncreaseFail = 0;
@@ -216,11 +209,7 @@ public class PressAnomalyDetectionService {
             reasons.add("대표 이상 이벤트: " + latestAnomaly.eventId());
         }
 
-        return new PressAnomalyDetectionResponse.AlertPanel(
-                true,
-                "프레스 이상 정지 탐지",
-                List.copyOf(reasons)
-        );
+        return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 정지 탐지", List.copyOf(reasons));
     }
 
     private boolean isPressAnomaly(PressAnomalyDetectionResponse.ChartPoint point) {

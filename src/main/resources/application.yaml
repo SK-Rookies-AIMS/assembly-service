@@ -17,6 +17,8 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        jdbc:
+          time_zone: Asia/Seoul
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -78,16 +80,6 @@ app:
       maximum-pool-size: ${SAMPLE_DB_MAXIMUM_POOL_SIZE:5}
       minimum-idle: ${SAMPLE_DB_MINIMUM_IDLE:1}
       pool-name: ${SAMPLE_DB_POOL_NAME:sample-db-pool}
-
-  redis:
-    cache:
-      ttl: ${REDIS_CACHE_TTL:10m}
-
-  opensearch:
-    scheme: ${OPENSEARCH_SCHEME:http}
-    host: ${OPENSEARCH_HOST:localhost}
-    port: ${OPENSEARCH_PORT:9200}
-
   kafka:
     bootstrap-servers: ${MSK_BOOTSTRAP_SERVERS}
     auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:earliest}
@@ -116,6 +108,15 @@ app:
       equipment:
         name: factory.equipment.status
         partitions: 2
+
+redis:
+  cache:
+    ttl: ${REDIS_CACHE_TTL:10m}
+
+opensearch:
+  scheme: ${OPENSEARCH_SCHEME:http}
+  host: ${OPENSEARCH_HOST:localhost}
+  port: ${OPENSEARCH_PORT:9200}
 
 logging:
   config: classpath:logback-spring.xml

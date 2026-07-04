@@ -123,6 +123,13 @@ public class ManufacturingKafkaConsumer {
 
             transitionFollowingProcesses(event.eventId(), currentEventRowId, carMasterId, processCode, abnormal);
             producer.sendAnalysis(analysis).join();
+            log.info(
+                    "카프카 원시 이벤트 처리 완료: eventId={}, processCode={}, abnormal={}, analysisSent={}",
+                    event.eventId(),
+                    processCode,
+                    abnormal,
+                    true
+            );
         } catch (RuntimeException exception) {
             if (!analysisStatusUpdated) {
                 int updatedRows = eventRepository.markAnalysisFailed(event.eventId(), exception.getMessage());
@@ -151,9 +158,18 @@ public class ManufacturingKafkaConsumer {
         traceStore.recordConsumed(record, "alert-analysis-consumer-group", analysis.eventId());
 
         // Case A: processRisk 기반 riskScore가 WARNING/CRITICAL이면 alert 발행
+        boolean alertSent = false;
         if (analyzer.requiresAlert(analysis)) {
             producer.sendAlert(analyzer.toAlertEvent(analysis)).join();
+            alertSent = true;
         }
+        log.info(
+                "카프카 이상 탐지 분석 이벤트 처리 완료: eventId={}, processCode={}, riskLevel={}, alertSent={}",
+                analysis.eventId(),
+                analysis.processCode(),
+                analysis.riskLevel(),
+                alertSent
+        );
     }
 
     @KafkaListener(
@@ -180,6 +196,13 @@ public class ManufacturingKafkaConsumer {
                 event.operationStatus(),
                 event.riskLevel(),
                 record.partition()
+        );
+        log.info(
+                "카프카 설비 상태 이벤트 처리 완료: eventId={}, equipmentCode={}, changeType={}, operationStatus={}",
+                event.eventId(),
+                event.equipmentCode(),
+                event.changeType(),
+                event.operationStatus()
         );
     }
 
@@ -211,6 +234,12 @@ public class ManufacturingKafkaConsumer {
                 event.riskLevel(),
                 event.riskScore(),
                 record.partition()
+        );
+        log.info(
+                "카프카 알림 이벤트 처리 완료: eventId={}, alertType={}, equipmentCode={}",
+                event.eventId(),
+                event.alertType(),
+                event.equipmentCode()
         );
     }
 
