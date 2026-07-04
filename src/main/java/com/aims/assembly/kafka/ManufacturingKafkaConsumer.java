@@ -320,14 +320,15 @@ public class ManufacturingKafkaConsumer {
                 nextProcessCode
         );
 
-        int updatedRows = eventRepository.releaseNextProcessByCurrentRowId(currentEventRowId);
-
+        // 정상이면 아무것도 하지 않음.
+        // 다음 공정 READY는 AGV 도착 API에서 처리.
         log.info(
-                "[PROCESS_FLOW] releaseNextProcessByCurrentRowId result eventId={}, currentEventRowId={}, updatedRows={}",
-                eventId,
-                currentEventRowId,
-                updatedRows
+                "[PROCESS_FLOW] analysis completed. Waiting for AGV arrival. eventId={}",
+                eventId
         );
+
+
+        //int updatedRows = eventRepository.releaseNextProcessByCurrentRowId(currentEventRowId);
     }
 
     private ProcessCode nextProcess(ProcessCode currentProcessCode) {
