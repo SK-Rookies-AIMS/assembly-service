@@ -1,6 +1,8 @@
 package com.aims.assembly.properties;
 
 import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -61,16 +63,10 @@ public class KafkaCustomProperties {
 
     @Getter
     @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class Topic {
         private String name;
         private int partitions;
-
-        public Topic() {
-        }
-
-        public Topic(String name, int partitions) {
-            this.name = name;
-            this.partitions = partitions;
-        }
     }
 }

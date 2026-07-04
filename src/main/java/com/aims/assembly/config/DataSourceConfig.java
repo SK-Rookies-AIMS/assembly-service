@@ -16,6 +16,8 @@ import javax.sql.DataSource;
 @RequiredArgsConstructor
 public class DataSourceConfig {
 
+    private static final String SEOUL_TIME_ZONE_SQL = "SET time_zone = '+09:00'";
+
     private final AppDataSourceProperties appDataSourceProperties;
 
     @Primary
@@ -52,6 +54,8 @@ public class DataSourceConfig {
         if (properties.getPoolName() != null && !properties.getPoolName().isBlank()) {
             config.setPoolName(properties.getPoolName());
         }
+
+        config.setConnectionInitSql(SEOUL_TIME_ZONE_SQL);
 
         return new HikariDataSource(config);
     }

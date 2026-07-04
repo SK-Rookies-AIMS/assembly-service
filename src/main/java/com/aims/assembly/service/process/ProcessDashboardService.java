@@ -10,11 +10,13 @@ import com.aims.assembly.dto.process.AssemblyDashboardResponse;
 import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
 import com.aims.assembly.dto.process.ProcessAvailableDatesResponse;
+import com.aims.assembly.mapper.ProcessDashboardResponseMapper;
 import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
 import com.aims.assembly.repository.equipment.EquipmentOperationRateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +31,7 @@ import java.util.Map;
 import java.util.Objects;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ProcessDashboardService {
@@ -53,12 +56,14 @@ public class ProcessDashboardService {
             countsByProcess.get(row.processCode()).put(row.status(), row.count());
         }
 
-        return new EquipmentOperationRateResponse(List.of(
+        EquipmentOperationRateResponse response = ProcessDashboardResponseMapper.toEquipmentOperationRateResponse(List.of(
                 equipmentOperationRateItem(ProcessCode.PRESS, countsByProcess.get(ProcessCode.PRESS)),
                 equipmentOperationRateItem(ProcessCode.BODY, countsByProcess.get(ProcessCode.BODY)),
                 equipmentOperationRateItem(ProcessCode.PAINT, countsByProcess.get(ProcessCode.PAINT)),
                 equipmentOperationRateItem(ProcessCode.ASSEMBLY, countsByProcess.get(ProcessCode.ASSEMBLY))
         ));
+        log.info("공정 장비 가동률 조회 완료: 공정수=4");
+        return response;
     }
 
     @Cacheable(
@@ -82,7 +87,14 @@ public class ProcessDashboardService {
                 PageRequest.of(0, normalizeLimit(limit))
         );
         if (rows.isEmpty()) {
-            return PaintDashboardResponse.empty(range.selectedDate());
+            PaintDashboardResponse emptyResponse = PaintDashboardResponse.empty(range.selectedDate());
+            log.info(
+                    "도장 대시보드 조회 완료: date={}, from={}, to={}, 건수=0",
+                    range.selectedDate(),
+                    range.from(),
+                    range.to()
+            );
+            return emptyResponse;
         }
 
         long analysisCount = rows.size();
@@ -97,7 +109,7 @@ public class ProcessDashboardService {
                 .filter(Objects::nonNull)
                 .toList());
 
-        PaintDashboardResponse.Summary summary = new PaintDashboardResponse.Summary(
+        PaintDashboardResponse.Summary summary = ProcessDashboardResponseMapper.toPaintSummary(
                 analysisCount,
                 percentage(abnormalCount, analysisCount),
                 averageSurfaceQualityScore,
@@ -107,7 +119,7 @@ public class ProcessDashboardService {
         List<PaintDashboardResponse.ChartPoint> chart = rows.stream()
                 .map(row -> {
                     ManufacturingAnalysisResult result = row.getAnalysisResult();
-                    return new PaintDashboardResponse.ChartPoint(
+                    return ProcessDashboardResponseMapper.toPaintChartPoint(
                             displayTime(result),
                             row.getDefectScore(),
                             row.getSurfaceQualityScore(),
@@ -128,7 +140,20 @@ public class ProcessDashboardService {
                                 Comparator.nullsLast(Comparator.naturalOrder())))
                 .orElse(null);
 
-        return new PaintDashboardResponse(range.selectedDate(), summary, chart, paintAlert(alertRow));
+        PaintDashboardResponse response = ProcessDashboardResponseMapper.toPaintDashboardResponse(
+                range.selectedDate(),
+                summary,
+                chart,
+                paintAlert(alertRow)
+        );
+        log.info(
+                "도장 대시보드 조회 완료: date={}, from={}, to={}, 건수={}",
+                range.selectedDate(),
+                range.from(),
+                range.to(),
+                rows.size()
+        );
+        return response;
     }
 
     @Cacheable(
@@ -152,7 +177,14 @@ public class ProcessDashboardService {
                 PageRequest.of(0, normalizeLimit(limit))
         );
         if (rows.isEmpty()) {
-            return AssemblyDashboardResponse.empty(range.selectedDate());
+            AssemblyDashboardResponse emptyResponse = AssemblyDashboardResponse.empty(range.selectedDate());
+            log.info(
+                    "조립 대시보드 조회 완료: date={}, from={}, to={}, 건수=0",
+                    range.selectedDate(),
+                    range.from(),
+                    range.to()
+            );
+            return emptyResponse;
         }
 
         long vehicleCount = rows.stream()
@@ -174,7 +206,7 @@ public class ProcessDashboardService {
                 .filter(Objects::nonNull)
                 .toList());
 
-        AssemblyDashboardResponse.Summary summary = new AssemblyDashboardResponse.Summary(
+        AssemblyDashboardResponse.Summary summary = ProcessDashboardResponseMapper.toAssemblySummary(
                 vehicleCount,
                 sequenceErrorCount,
                 missingPartCount,
@@ -185,7 +217,7 @@ public class ProcessDashboardService {
         List<AssemblyDashboardResponse.VehicleRow> vehicles = rows.stream()
                 .map(row -> {
                     ManufacturingAnalysisResult result = row.getAnalysisResult();
-                    return new AssemblyDashboardResponse.VehicleRow(
+                    return ProcessDashboardResponseMapper.toAssemblyVehicleRow(
                             result.getCarMasterId(),
                             carDisplayId(result.getCarMasterId()),
                             row.getExpectedSequence(),
@@ -208,17 +240,34 @@ public class ProcessDashboardService {
                                 Comparator.nullsLast(Comparator.naturalOrder())))
                 .orElse(null);
 
-        return new AssemblyDashboardResponse(range.selectedDate(), summary, vehicles, assemblyAlert(alertRow));
+        AssemblyDashboardResponse response = ProcessDashboardResponseMapper.toAssemblyDashboardResponse(
+                range.selectedDate(),
+                summary,
+                vehicles,
+                assemblyAlert(alertRow)
+        );
+        log.info(
+                "조립 대시보드 조회 완료: date={}, from={}, to={}, 건수={}",
+                range.selectedDate(),
+                range.from(),
+                range.to(),
+                rows.size()
+        );
+        return response;
     }
 
     @Cacheable(cacheNames = "process-paint-dates-v1", key = "'all'")
     public ProcessAvailableDatesResponse getPaintDates() {
-        return ProcessAvailableDatesResponse.of(availablePaintDates());
+        ProcessAvailableDatesResponse response = ProcessAvailableDatesResponse.of(availablePaintDates());
+        log.info("도장 조회 가능 날짜 조회 완료");
+        return response;
     }
 
     @Cacheable(cacheNames = "process-assembly-dates-v1", key = "'all'")
     public ProcessAvailableDatesResponse getAssemblyDates() {
-        return ProcessAvailableDatesResponse.of(availableAssemblyDates());
+        ProcessAvailableDatesResponse response = ProcessAvailableDatesResponse.of(availableAssemblyDates());
+        log.info("조립 조회 가능 날짜 조회 완료");
+        return response;
     }
 
     private Map<ProcessCode, EnumMap<EquipmentOperationStatus, Long>> initialEquipmentStatusCounts() {
@@ -250,7 +299,7 @@ public class ProcessDashboardService {
         long faultCount = statusCounts.get(EquipmentOperationStatus.FAULT);
         long operatingCount = runningCount + warningCount;
         long totalCount = runningCount + warningCount + stoppedCount + faultCount;
-        return new EquipmentOperationRateResponse.Item(
+        return ProcessDashboardResponseMapper.toEquipmentOperationRateItem(
                 processCode.name(),
                 processName(processCode),
                 runningCount,
@@ -304,7 +353,7 @@ public class ProcessDashboardService {
                 && (row.getThicknessValue() < THICKNESS_MIN || row.getThicknessValue() > THICKNESS_MAX)) {
             messages.add("표면 품질 점수 저하 및 두께 이상 의심");
         }
-        return new PaintDashboardResponse.Alert("도장 품질 이상 감지", messages);
+        return ProcessDashboardResponseMapper.toPaintAlert("도장 품질 이상 감지", messages);
     }
 
     private AssemblyDashboardResponse.Alert assemblyAlert(AssemblyAnalysisResult row) {
@@ -329,7 +378,7 @@ public class ProcessDashboardService {
         } else if (missingParts > 0 || fasteningErrors > 0) {
             messages.add("부품 누락 또는 체결 오류 감지");
         }
-        return new AssemblyDashboardResponse.Alert("조립 순서 오류 감지", messages);
+        return ProcessDashboardResponseMapper.toAssemblyAlert("조립 순서 오류 감지", messages);
     }
 
     private QueryRange queryRange(
