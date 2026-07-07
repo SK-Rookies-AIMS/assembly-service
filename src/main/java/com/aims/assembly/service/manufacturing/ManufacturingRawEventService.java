@@ -61,25 +61,34 @@ public class ManufacturingRawEventService {
 
     public CompletableFuture<KafkaPublishResult> sendNextReady() {
         return execute(() -> requireSuccess(transactionTemplate.execute(status -> {
-            repository.prepareDispatchablePendingEvents(LocalDateTime.now(), 1);
             StoredManufacturingEvent event = repository
                     .findReadyForUpdate(LocalDateTime.now(), 1, maxRetries()).stream().findFirst()
                     .orElseThrow(() -> new KafkaException(KafkaErrorStatus.UNSENT_EVENT_NOT_FOUND));
+
             return publishLocked(event);
         })));
     }
 
     public CompletableFuture<List<KafkaPublishResult>> sendNextReadyBatch(int batchSize) {
         int limit = Math.max(1, Math.min(batchSize, 1_000));
+
         return execute(() -> transactionTemplate.execute(status -> {
-            repository.prepareDispatchablePendingEvents(LocalDateTime.now(), limit);
             List<StoredManufacturingEvent> events = repository.findReadyForUpdate(
-                    LocalDateTime.now(), limit, maxRetries());
+                    LocalDateTime.now(),
+                    limit,
+                    maxRetries()
+            );
+
             List<KafkaPublishResult> results = new ArrayList<>(events.size());
+
             for (StoredManufacturingEvent event : events) {
                 PublishOutcome outcome = publishLocked(event);
-                if (outcome.result() != null) results.add(outcome.result());
+
+                if (outcome.result() != null) {
+                    results.add(outcome.result());
+                }
             }
+
             return List.copyOf(results);
         }));
     }
