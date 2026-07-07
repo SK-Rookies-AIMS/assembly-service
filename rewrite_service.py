@@ -1,4 +1,10 @@
-package com.aims.assembly.service.body;
+import re
+
+with open('src/main/java/com/aims/assembly/service/body/BodyAnomalyDetectionService.java', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# I will just write a completely clean version based on the code I know
+clean_code = """package com.aims.assembly.service.body;
 
 import com.aims.assembly.domain.body.BodyAnalysisResult;
 import com.aims.assembly.dto.body.BodyAnomalyDetectionResponse;
@@ -31,8 +37,7 @@ import java.util.stream.Collectors;
 public class BodyAnomalyDetectionService {
     private static final int MAX_EVENT_LOOKUP_SIZE = 10_000;
     private static final Double TARGET_VIBRATION_SCORE = 0.75;
-    private static final Double TARGET_VIBRATION_PEAK = 0.007;
-    private static final Double TARGET_FREQUENCY_PEAK = 0.005;
+    private static final Double TARGET_FREQUENCY_PEAK = 3.0;
 
     private final BodyAnalysisResultRepository repository;
     private final ManufacturingEventJsonRepository eventJsonRepository;
@@ -102,13 +107,8 @@ public class BodyAnomalyDetectionService {
         BodyAnomalyDetectionResponse.Metrics metrics = toMetrics(summaryResult, summaryPoint, detected, maxRiskScore);
         
         BodyAnomalyDetectionResponse.FrequencyZoneAnalysis freqAnalysis = null;
-        List<BodyAnomalyDetectionResponse.FrequencyBandPoint> freqChart = new ArrayList<>();
         if (metrics != null && metrics.frequencyBands() != null) {
             freqAnalysis = analyzeFrequencyZones(metrics.frequencyBands());
-            LocalDateTime chartTime = summaryPoint != null ? summaryPoint.timestamp() : null;
-            metrics.frequencyBands().forEach((k, v) -> freqChart.add(
-                    new BodyAnomalyDetectionResponse.FrequencyBandPoint(chartTime, formatFrequencyBand(k), v, TARGET_FREQUENCY_PEAK)
-            ));
         }
 
         BodyAnomalyDetectionResponse response = BodyAnomalyDetectionResponseMapper.toResponse(
@@ -119,7 +119,6 @@ public class BodyAnomalyDetectionService {
                 dateOptions,
                 metrics,
                 points,
-                freqChart,
                 freqAnalysis,
                 toAlert(points, detected, summaryResult)
         );
@@ -184,8 +183,8 @@ public class BodyAnomalyDetectionService {
                 analysis.getEventTime(),
                 TARGET_VIBRATION_SCORE,
                 vibrationScore,
-                TARGET_VIBRATION_PEAK,
-                vibrationPeak,
+                TARGET_FREQUENCY_PEAK,
+                toDisplayPeakValue(vibrationPeak),
                 vibrationRms,
                 analysis.getRiskScore(),
                 isAbnormal,
@@ -220,7 +219,7 @@ public class BodyAnomalyDetectionService {
                         bodyData.robotOperationMode != null ? bodyData.robotOperationMode : "NORMAL",
                         TARGET_VIBRATION_SCORE,
                         pointVibrationScore,
-                        TARGET_VIBRATION_PEAK,
+                        TARGET_FREQUENCY_PEAK,
                         pointVibrationPeak,
                         pointVibrationRms,
                         bodyData.frequencyPeakBand,
@@ -232,7 +231,7 @@ public class BodyAnomalyDetectionService {
                 );
             }
             return BodyAnomalyDetectionResponseMapper.toMetrics(
-                    null, "NORMAL", TARGET_VIBRATION_SCORE, pointVibrationScore, TARGET_VIBRATION_PEAK, pointVibrationPeak, pointVibrationRms, null, null, maxRiskScore, "0-100", severity, new HashMap<>()
+                    null, "NORMAL", TARGET_VIBRATION_SCORE, pointVibrationScore, TARGET_FREQUENCY_PEAK, pointVibrationPeak, pointVibrationRms, null, null, maxRiskScore, "0-100", severity, new HashMap<>()
             );
         }
         return BodyAnomalyDetectionResponseMapper.toMetrics(
@@ -240,11 +239,11 @@ public class BodyAnomalyDetectionService {
                 result.getRobotOperationMode() != null ? result.getRobotOperationMode() : "NORMAL",
                 TARGET_VIBRATION_SCORE,
                 pointVibrationScore != null ? pointVibrationScore : result.getRobotVibrationScore(),
-                TARGET_VIBRATION_PEAK,
+                TARGET_FREQUENCY_PEAK,
                 pointVibrationPeak,
                 pointVibrationRms,
                 result.getFrequencyPeakBand(),
-                result.getFrequencyPeakValue(),
+                toDisplayPeakValue(result.getFrequencyPeakValue()),
                 maxRiskScore,
                 "0-100",
                 severity,
@@ -335,8 +334,8 @@ public class BodyAnomalyDetectionService {
         for (BodyAnomalyDetectionResponse.ChartPoint point : points) {
             if (!isBodyAnomaly(point)) continue;
             if (Boolean.TRUE.equals(point.isAbnormal())) abnormalCount++;
-            if (point.vibrationScore() != null) {
-                maxVibrationScore = Math.max(maxVibrationScore, point.vibrationScore());
+            if (point.robotVibrationScore() != null) {
+                maxVibrationScore = Math.max(maxVibrationScore, point.robotVibrationScore());
             }
         }
 
@@ -354,8 +353,8 @@ public class BodyAnomalyDetectionService {
             }
             if (summaryResult.getFrequencyPeakValue() != null && summaryResult.getFrequencyPeakValue() > 0) {
                 reasons.add(String.format(
-                        "피크 진동값 급증 (%.6f mm/s)",
-                        summaryResult.getFrequencyPeakValue()
+                        "피크 진동값 급증 (%.1f mm/s)",
+                        toDisplayPeakValue(summaryResult.getFrequencyPeakValue())
                 ));
             }
             if (summaryResult.getFrequencyPeakBand() != null) {
@@ -373,7 +372,12 @@ public class BodyAnomalyDetectionService {
         return BodyAnomalyDetectionResponseMapper.toAlert(true, "차체 이상 탐지", List.copyOf(reasons));
     }
 
-
+    private Double toDisplayPeakValue(Double rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        return rawValue < 1.0 ? rawValue * 1000.0 : rawValue;
+    }
 
     private String formatFrequencyBand(String raw) {
         if (raw == null) return "";
@@ -396,8 +400,8 @@ public class BodyAnomalyDetectionService {
         double weight = 0.0;
         if (Boolean.TRUE.equals(point.isAbnormal())) weight += 50.0;
         if (point.riskScore() != null) weight += point.riskScore();
-        if (point.vibrationScore() != null) weight += point.vibrationScore() * 10.0;
-        if (point.vibrationPeak() != null) weight += point.vibrationPeak() * 5.0;
+        if (point.robotVibrationScore() != null) weight += point.robotVibrationScore() * 10.0;
+        if (point.frequencyPeakValue() != null) weight += point.frequencyPeakValue() * 5.0;
         return weight;
     }
 
@@ -539,6 +543,10 @@ public class BodyAnomalyDetectionService {
             this.vibrationRms = vibrationRms;
         }
     }
-
-
 }
+"""
+
+with open('src/main/java/com/aims/assembly/service/body/BodyAnomalyDetectionService.java', 'w', encoding='utf-8') as f:
+    f.write(clean_code)
+
+print("Rewrite done")

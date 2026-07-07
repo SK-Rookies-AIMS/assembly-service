@@ -354,9 +354,9 @@ public class ManufacturingEventAnalyzer {
                 double cycleOverTargetSec = Math.max(0, cycleTimeSec - targetCycleTimeSec);
                 
                 double score = clamp(
-                        Math.min(40.0, stationDelaySec * 2.0)
-                        + Math.min(35.0, cycleOverTargetSec * 1.5)
-                        + Math.min(20.0, Math.max(0.0, rmsAmpere - 1.5) * 8.0)
+                        Math.min(40.0, stationDelaySec * 1.0)
+                        + Math.min(35.0, cycleOverTargetSec * 1.0)
+                        + Math.min(20.0, Math.max(0.0, rmsAmpere - 1.5) * 5.0)
                         + (countIncrease ? 0.0 : 20.0)
                 );
                 yield new ProcessComponent(
@@ -370,7 +370,7 @@ public class ManufacturingEventAnalyzer {
                                 "rmsAmpere", rmsAmpere,
                                 "countIncreaseYn", countIncrease
                         ),
-                        "min(40, stationDelaySec * 4) + min(35, max(0, cycleTimeSec - targetCycleTimeSec) * 3) + min(20, max(0, rmsAmpere - 1.5) * 8) + (countIncreaseYn ? 0 : 20)"
+                        "min(40, stationDelaySec * 1) + min(35, max(0, cycleTimeSec - targetCycleTimeSec) * 1) + min(20, max(0, rmsAmpere - 1.5) * 5) + (countIncreaseYn ? 0 : 20)"
                 );
             }
             case BODY -> {
