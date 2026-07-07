@@ -54,9 +54,6 @@ public record PressAnomalyDetectionResponse(
         public static ChartPoint from(PressAnalysisResult result, LocalDateTime eventJsonEventTime) {
             var analysis = result.getAnalysisResult();
             Double score = analysis.getRiskScore();
-            if (score != null && score >= 100.0) {
-                score = 99.0;
-            }
             return new ChartPoint(
                     analysis.getEventId(),
                     analysis.getAnalysisId(),

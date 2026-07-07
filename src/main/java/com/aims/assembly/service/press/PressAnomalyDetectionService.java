@@ -82,11 +82,8 @@ public class PressAnomalyDetectionService {
         boolean detected = points.stream().anyMatch(this::isPressAnomaly);
         LocalDateTime previousEndAt = points.isEmpty() ? null : points.get(0).timestamp().minusNanos(1);
 
-        double maxRiskScore = points.stream()
-                .filter(this::isPressAnomaly)
-                .mapToDouble(p -> p.riskScore() != null ? p.riskScore() : 0.0)
-                .max()
-                .orElse(summaryPoint != null && summaryPoint.riskScore() != null ? summaryPoint.riskScore() : 0.0);
+        Double dbMaxRiskScore = repository.findMaxRiskScoreByEventTimeBetween(rangeFrom, rangeTo);
+        double maxRiskScore = dbMaxRiskScore != null ? dbMaxRiskScore : 0.0;
 
         PressAnomalyDetectionResponse response = PressAnomalyDetectionResponseMapper.toResponse(
                 targetDate,
@@ -152,7 +149,22 @@ public class PressAnomalyDetectionService {
                     )
             );
         }
-        return PressAnomalyDetectionResponseMapper.toMetrics(point);
+        // Use the DB maxRiskScore instead of the single point's score
+        String computedSeverity = maxRiskScore >= 80.0 ? "CRITICAL" : (maxRiskScore >= 60.0 ? "WARNING" : point.severity());
+        PressAnomalyDetectionResponse.ChartPoint updatedPoint = new PressAnomalyDetectionResponse.ChartPoint(
+                point.eventId(),
+                point.analysisId(),
+                point.timestamp(),
+                point.targetCycleTimeSec(),
+                point.actualCycleTimeSec(),
+                point.cycleTimeGapSec(),
+                point.timestampDelaySec(),
+                maxRiskScore,
+                point.countIncreaseYn(),
+                point.isAbnormal(),
+                computedSeverity
+        );
+        return PressAnomalyDetectionResponseMapper.toMetrics(updatedPoint);
     }
 
     private PressAnomalyDetectionResponse.AlertPanel toAlert(

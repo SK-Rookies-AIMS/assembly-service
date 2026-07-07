@@ -46,6 +46,17 @@ public interface PressAnalysisResultRepository extends JpaRepository<PressAnalys
     List<PressAnalysisResult> findRecentDashboard(Pageable pageable);
 
     @Query("""
+            select max(analysis.riskScore)
+            from PressAnalysisResult press
+            join press.analysisResult analysis
+            where analysis.eventTime between :from and :to
+            """)
+    Double findMaxRiskScoreByEventTimeBetween(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
+    );
+
+    @Query("""
     SELECT
         DATE(ar.eventTime) AS date,
         MIN(ar.eventId) AS sampleEventId

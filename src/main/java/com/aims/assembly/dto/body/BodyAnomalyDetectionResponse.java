@@ -13,23 +13,32 @@ public record BodyAnomalyDetectionResponse(
         List<DateOption> dateOptions,
         Metrics metrics,
         List<ChartPoint> chart,
+        List<FrequencyBandPoint> frequencyChart,
+        FrequencyZoneAnalysis frequencyZoneAnalysis,
         AlertPanel alert
 ) {
+    public record FrequencyBandPoint(
+            LocalDateTime timestamp,
+            String band, 
+            Double value,
+            Double targetValue
+    ) {}
     public record DateOption(
             LocalDate date,
             String sampleEventId
     ) {
     }
 
-    /**
-     * 상단 지표: 로봇 모션 상태, 운전 모드, 진동 점수, 피크 진동값, 전체 위험도
-     */
     public record Metrics(
             String robotMotionStatus,
             String robotOperationMode,
-            Double robotVibrationScore,
-            Double frequencyPeakValue,
+            Double targetVibrationScore,
+            Double vibrationScore,
+            Double targetVibrationPeak,
+            Double vibrationPeak,
+            Double vibrationRms,
             String frequencyPeakBand,
+            Double frequencyPeakValue,
             Double riskScore,
             String riskScoreScale,
             String severity,
@@ -37,19 +46,31 @@ public record BodyAnomalyDetectionResponse(
     ) {
     }
 
-    /**
-     * 그래프 시계열 포인트: 로봇 진동 점수, 위험도, 피크 진동값
-     */
     public record ChartPoint(
             String eventId,
             String analysisId,
             LocalDateTime timestamp,
-            Double robotVibrationScore,
-            Double frequencyPeakValue,
+            Double targetVibrationScore,
+            Double vibrationScore,
+            Double targetVibrationPeak,
+            Double vibrationPeak,
+            Double vibrationRms,
             Double riskScore,
             Boolean isAbnormal,
             String severity
     ) {
+    }
+
+    public record FrequencyZoneAnalysis(
+            ZoneStats low,
+            ZoneStats main,
+            ZoneStats high,
+            ZoneStats ultra
+    ) {
+        public record ZoneStats(
+                Double avg,
+                Double max
+        ) {}
     }
 
     public record AlertPanel(

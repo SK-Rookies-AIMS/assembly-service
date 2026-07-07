@@ -21,9 +21,11 @@ public final class BodyAnomalyDetectionResponseMapper {
             List<BodyAnomalyDetectionResponse.DateOption> dateOptions,
             BodyAnomalyDetectionResponse.Metrics metrics,
             List<BodyAnomalyDetectionResponse.ChartPoint> chart,
+            List<BodyAnomalyDetectionResponse.FrequencyBandPoint> frequencyChart,
+            BodyAnomalyDetectionResponse.FrequencyZoneAnalysis frequencyZoneAnalysis,
             BodyAnomalyDetectionResponse.AlertPanel alert
     ) {
-        return new BodyAnomalyDetectionResponse(date, from, to, previousEndAt, dateOptions, metrics, chart, alert);
+        return new BodyAnomalyDetectionResponse(date, from, to, previousEndAt, dateOptions, metrics, chart, frequencyChart, frequencyZoneAnalysis, alert);
     }
 
     public static BodyAnomalyDetectionResponse.DateOption toDateOption(
@@ -37,8 +39,11 @@ public final class BodyAnomalyDetectionResponseMapper {
             String eventId,
             String analysisId,
             LocalDateTime timestamp,
-            Double robotVibrationScore,
-            Double frequencyPeakValue,
+            Double targetVibrationScore,
+            Double vibrationScore,
+            Double targetVibrationPeak,
+            Double vibrationPeak,
+            Double vibrationRms,
             Double riskScore,
             Boolean isAbnormal,
             String severity
@@ -47,29 +52,12 @@ public final class BodyAnomalyDetectionResponseMapper {
                 eventId,
                 analysisId,
                 timestamp,
-                robotVibrationScore,
-                frequencyPeakValue,
+                targetVibrationScore,
+                vibrationScore,
+                targetVibrationPeak,
+                vibrationPeak,
+                vibrationRms,
                 riskScore,
-                isAbnormal,
-                severity
-        );
-    }
-
-    public static BodyAnomalyDetectionResponse.ChartPoint toChartPoint(BodyAnalysisResult result, Double frequencyPeakValue) {
-        var analysis = result.getAnalysisResult();
-        boolean isAbnormal = Boolean.TRUE.equals(analysis.getIsAbnormal()) || (analysis.getRiskScore() != null && analysis.getRiskScore() >= 30.0);
-        String severity = analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name();
-        if (isAbnormal && "NORMAL".equals(severity)) {
-            severity = "WARNING";
-        }
-
-        return new BodyAnomalyDetectionResponse.ChartPoint(
-                analysis.getEventId(),
-                analysis.getAnalysisId(),
-                analysis.getEventTime(),
-                result.getRobotVibrationScore(),
-                frequencyPeakValue,
-                analysis.getRiskScore(),
                 isAbnormal,
                 severity
         );
@@ -78,9 +66,13 @@ public final class BodyAnomalyDetectionResponseMapper {
     public static BodyAnomalyDetectionResponse.Metrics toMetrics(
             String robotMotionStatus,
             String robotOperationMode,
-            Double robotVibrationScore,
-            Double frequencyPeakValue,
+            Double targetVibrationScore,
+            Double vibrationScore,
+            Double targetVibrationPeak,
+            Double vibrationPeak,
+            Double vibrationRms,
             String frequencyPeakBand,
+            Double frequencyPeakValue,
             Double riskScore,
             String riskScoreScale,
             String severity,
@@ -89,9 +81,13 @@ public final class BodyAnomalyDetectionResponseMapper {
         return new BodyAnomalyDetectionResponse.Metrics(
                 robotMotionStatus,
                 robotOperationMode,
-                robotVibrationScore,
-                frequencyPeakValue,
+                targetVibrationScore,
+                vibrationScore,
+                targetVibrationPeak,
+                vibrationPeak,
+                vibrationRms,
                 frequencyPeakBand,
+                frequencyPeakValue,
                 riskScore,
                 riskScoreScale,
                 severity,
