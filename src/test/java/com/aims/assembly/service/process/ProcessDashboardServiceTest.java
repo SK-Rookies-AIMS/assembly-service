@@ -2,6 +2,7 @@ package com.aims.assembly.service.process;
 
 import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
 import com.aims.assembly.domain.assembly.AssemblyAnalysisResult;
+import com.aims.assembly.domain.commons.BaseEntity;
 import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.domain.enums.ProcessCode;
 import com.aims.assembly.domain.enums.Severity;
@@ -45,9 +46,17 @@ class ProcessDashboardServiceTest {
     }
 
     @Test
+    void paintAndAssemblyDetailsDoNotUseJpaAuditBaseEntity() {
+        assertThat(BaseEntity.class.isAssignableFrom(PaintAnalysisResult.class)).isFalse();
+        assertThat(BaseEntity.class.isAssignableFrom(AssemblyAnalysisResult.class)).isFalse();
+    }
+
+    @Test
     void paintDashboardBuildsSummaryChartAndAlert() {
+        LocalDateTime eventTime = LocalDateTime.of(2026, 6, 18, 13, 55);
+        LocalDateTime analyzedAt = LocalDateTime.of(2026, 6, 19, 13, 56);
         PaintAnalysisResult row = PaintAnalysisResult.builder()
-                .analysisResult(result(ProcessCode.PAINT, 1L, Severity.CRITICAL, true, 88.5))
+                .analysisResult(result(ProcessCode.PAINT, 1L, Severity.CRITICAL, true, 88.5, eventTime, analyzedAt))
                 .defectScore(0.87)
                 .thermalStdTemp(4.2)
                 .surfaceQualityScore(72.3)
@@ -66,13 +75,17 @@ class ProcessDashboardServiceTest {
 
         assertThat(response.selectedDate()).isEqualTo(LocalDate.of(2026, 6, 18));
         assertThat(response.summary().analysisCount()).isEqualTo(1);
+        assertThat(response.summary().averageThicknessValue()).isEqualTo(126.5);
+        assertThat(response.summary().averageThermalStdTemp()).isEqualTo(4.2);
         assertThat(response.summary().defectRate()).isEqualTo(100.0);
         assertThat(response.summary().averageSurfaceQualityScore()).isEqualTo(72.3);
         assertThat(response.summary().alertCount()).isEqualTo(1);
         assertThat(response.chart()).singleElement().satisfies(point -> {
+            assertThat(point.time()).isEqualTo(eventTime);
             assertThat(point.defectScore()).isEqualTo(0.87);
             assertThat(point.surfaceQualityScore()).isEqualTo(72.3);
             assertThat(point.thicknessValue()).isEqualTo(126.5);
+            assertThat(point.riskScore()).isEqualTo(88.5);
             assertThat(point.imagePosition()).isEqualTo("LEFT");
         });
         assertThat(response.alert().messages())
@@ -82,15 +95,17 @@ class ProcessDashboardServiceTest {
 
     @Test
     void assemblyDashboardBuildsSummaryVehiclesAndAlert() {
+        LocalDateTime eventTime = LocalDateTime.of(2026, 6, 18, 13, 55);
+        LocalDateTime analyzedAt = LocalDateTime.of(2026, 6, 19, 13, 56);
         AssemblyAnalysisResult row = AssemblyAnalysisResult.builder()
-                .analysisResult(result(ProcessCode.ASSEMBLY, 1L, Severity.CRITICAL, true, 86.5))
+                .analysisResult(result(ProcessCode.ASSEMBLY, 1L, Severity.CRITICAL, true, 86.5, eventTime, analyzedAt))
                 .expectedSequence("A01 > A02 > A03 > A04")
                 .actualSequence("A01 > A03 > A02 > A04")
                 .sequenceErrorCount(1)
                 .missingPartCount(0)
                 .fasteningErrorCount(1)
                 .build();
-        when(assemblyRepository.findDashboardAnalyzedAtValues()).thenReturn(List.of(
+        when(assemblyRepository.findDashboardEventTimeValues()).thenReturn(List.of(
                 LocalDateTime.of(2026, 6, 1, 10, 0),
                 LocalDateTime.of(2026, 6, 18, 10, 0)
         ));
@@ -116,6 +131,7 @@ class ProcessDashboardServiceTest {
             assertThat(vehicle.sequenceErrorCount()).isEqualTo(1);
             assertThat(vehicle.missingPartCount()).isZero();
             assertThat(vehicle.fasteningErrorCount()).isEqualTo(1);
+            assertThat(vehicle.time()).isEqualTo(eventTime);
             assertThat(vehicle.status()).isEqualTo("위험");
         });
         assertThat(response.alert().messages())
@@ -124,8 +140,8 @@ class ProcessDashboardServiceTest {
 
     @Test
     void returnsEmptyResponsesWhenNoDataExists() {
-        when(paintRepository.findDashboardAnalyzedAtValues()).thenReturn(List.of());
-        when(assemblyRepository.findDashboardAnalyzedAtValues()).thenReturn(List.of());
+        when(paintRepository.findDashboardEventTimeValues()).thenReturn(List.of());
+        when(assemblyRepository.findDashboardEventTimeValues()).thenReturn(List.of());
         when(paintRepository.findDashboardRows(any(), any(), any(Pageable.class)))
                 .thenReturn(List.of());
         when(assemblyRepository.findDashboardRows(any(), any(), any(Pageable.class)))
@@ -150,7 +166,7 @@ class ProcessDashboardServiceTest {
                 .analysisResult(result(ProcessCode.PAINT, 1L, Severity.NORMAL, false, 10.0))
                 .surfaceQualityScore(90.0)
                 .build();
-        when(paintRepository.findDashboardAnalyzedAtValues()).thenReturn(List.of(
+        when(paintRepository.findDashboardEventTimeValues()).thenReturn(List.of(
                 LocalDateTime.of(2026, 6, 1, 10, 0),
                 LocalDateTime.of(2026, 6, 18, 10, 0)
         ));
@@ -168,12 +184,12 @@ class ProcessDashboardServiceTest {
 
     @Test
     void dateApisReturnDatesAndLatestDate() {
-        when(paintRepository.findDashboardAnalyzedAtValues()).thenReturn(List.of(
+        when(paintRepository.findDashboardEventTimeValues()).thenReturn(List.of(
                 LocalDateTime.of(2026, 6, 1, 10, 0),
                 LocalDateTime.of(2026, 6, 1, 11, 0),
                 LocalDateTime.of(2026, 6, 18, 10, 0)
         ));
-        when(assemblyRepository.findDashboardAnalyzedAtValues()).thenReturn(List.of(
+        when(assemblyRepository.findDashboardEventTimeValues()).thenReturn(List.of(
                 LocalDateTime.of(2026, 6, 1, 10, 0)
         ));
 
@@ -241,14 +257,34 @@ class ProcessDashboardServiceTest {
             boolean abnormal,
             double riskScore
     ) {
+        return result(
+                processCode,
+                carMasterId,
+                severity,
+                abnormal,
+                riskScore,
+                LocalDateTime.of(2026, 6, 18, 13, 55),
+                LocalDateTime.of(2026, 6, 18, 13, 56)
+        );
+    }
+
+    private ManufacturingAnalysisResult result(
+            ProcessCode processCode,
+            Long carMasterId,
+            Severity severity,
+            boolean abnormal,
+            double riskScore,
+            LocalDateTime eventTime,
+            LocalDateTime analyzedAt
+    ) {
         return ManufacturingAnalysisResult.builder()
                 .analysisId("ANL-" + processCode)
                 .eventId("EVT-" + processCode)
                 .carMasterId(carMasterId)
                 .equipmentId(10L)
                 .processCode(processCode)
-                .eventTime(LocalDateTime.of(2026, 6, 18, 13, 55))
-                .analyzedAt(LocalDateTime.of(2026, 6, 18, 13, 56))
+                .eventTime(eventTime)
+                .analyzedAt(analyzedAt)
                 .isAbnormal(abnormal)
                 .severity(severity)
                 .riskScore(riskScore)

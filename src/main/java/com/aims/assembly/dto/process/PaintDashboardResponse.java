@@ -12,10 +12,20 @@ public record PaintDashboardResponse(
 ) {
     public record Summary(
             long analysisCount,
-            double defectRate,
+            double averageThicknessValue,
             double averageSurfaceQualityScore,
-            long alertCount
+            double defectRate,
+            long alertCount,
+            double averageThermalStdTemp
     ) {
+        public Summary(
+                long analysisCount,
+                double defectRate,
+                double averageSurfaceQualityScore,
+                long alertCount
+        ) {
+            this(analysisCount, 0.0, averageSurfaceQualityScore, defectRate, alertCount, 0.0);
+        }
     }
 
     public record ChartPoint(
@@ -33,8 +43,23 @@ public record PaintDashboardResponse(
 
     public record Alert(
             String title,
-            List<String> messages
+            List<String> messages,
+            Detail detail
     ) {
+        public Alert(String title, List<String> messages) {
+            this(title, messages, null);
+        }
+
+        public record Detail(
+                String visionLabel,
+                String imagePosition,
+                Double thicknessValue,
+                Double surfaceQualityScore,
+                Double thermalStdTemp,
+                Double riskScore,
+                String severity
+        ) {
+        }
     }
 
     public static PaintDashboardResponse empty() {
@@ -44,7 +69,7 @@ public record PaintDashboardResponse(
     public static PaintDashboardResponse empty(LocalDate selectedDate) {
         return new PaintDashboardResponse(
                 selectedDate,
-                new Summary(0, 0.0, 0.0, 0),
+                new Summary(0, 0.0, 0.0, 0.0, 0, 0.0),
                 List.of(),
                 null
         );
