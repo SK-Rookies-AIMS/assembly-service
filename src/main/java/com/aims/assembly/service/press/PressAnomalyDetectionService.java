@@ -64,7 +64,8 @@ public class PressAnomalyDetectionService {
                 .stream()
                 .map(this::toChartPoint)
                 .filter(point -> point.timestamp() != null)
-                .sorted(Comparator.comparing(PressAnomalyDetectionResponse.ChartPoint::timestamp))
+                .sorted(Comparator.comparing(PressAnomalyDetectionResponse.ChartPoint::timestamp)
+                        .thenComparing(PressAnomalyDetectionResponse.ChartPoint::eventId))
                 .toList();
 
         List<PressAnomalyDetectionResponse.ChartPoint> points = allPoints.size() <= size
@@ -95,7 +96,7 @@ public class PressAnomalyDetectionService {
                 dateOptions,
                 toMetrics(summaryPoint, detected, maxRiskScore),
                 points,
-                toAlert(points, detected)
+                toAlert(points, detected, summaryPoint)
         );
         log.info(
                 "프레스 이상 탐지 대시보드 조회 완료: date={}, from={}, to={}, 건수={}, 탐지여부={}",
@@ -156,7 +157,8 @@ public class PressAnomalyDetectionService {
 
     private PressAnomalyDetectionResponse.AlertPanel toAlert(
             List<PressAnomalyDetectionResponse.ChartPoint> points,
-            boolean detected
+            boolean detected,
+            PressAnomalyDetectionResponse.ChartPoint summaryPoint
     ) {
         if (!detected || points == null || points.isEmpty()) {
             return PressAnomalyDetectionResponseMapper.toAlert(false, "프레스 이상 정지 미탐지", List.of());
@@ -168,13 +170,11 @@ public class PressAnomalyDetectionService {
         int abnormalCount = 0;
         double maxCycleTimeGap = 0.0;
         double maxTimestampDelay = 0.0;
-        PressAnomalyDetectionResponse.ChartPoint latestAnomaly = null;
 
         for (PressAnomalyDetectionResponse.ChartPoint point : points) {
             if (!isPressAnomaly(point)) {
                 continue;
             }
-            latestAnomaly = point;
             if (Boolean.FALSE.equals(point.countIncreaseYn())) {
                 countIncreaseFail++;
             }
@@ -205,8 +205,8 @@ public class PressAnomalyDetectionService {
         if (abnormalCount > 0) {
             reasons.add("이상 징후 감지: " + abnormalCount + "건");
         }
-        if (latestAnomaly != null) {
-            reasons.add("대표 이상 이벤트: " + latestAnomaly.eventId());
+        if (summaryPoint != null) {
+            reasons.add("대표 이상 이벤트: " + summaryPoint.eventId());
         }
 
         return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 정지 탐지", List.copyOf(reasons));
