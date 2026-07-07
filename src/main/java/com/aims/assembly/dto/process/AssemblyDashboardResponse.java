@@ -6,10 +6,23 @@ import java.util.List;
 
 public record AssemblyDashboardResponse(
         LocalDate selectedDate,
+        LocalDateTime from,
+        LocalDateTime to,
+        LocalDateTime dataStartAt,
+        LocalDateTime dataEndAt,
         Summary summary,
         List<VehicleRow> vehicles,
         Alert alert
 ) {
+    public AssemblyDashboardResponse(
+            LocalDate selectedDate,
+            Summary summary,
+            List<VehicleRow> vehicles,
+            Alert alert
+    ) {
+        this(selectedDate, null, null, null, null, summary, vehicles, alert);
+    }
+
     public record Summary(
             long vehicleCount,
             long sequenceErrorCount,
@@ -45,8 +58,16 @@ public record AssemblyDashboardResponse(
     }
 
     public static AssemblyDashboardResponse empty(LocalDate selectedDate) {
+        return empty(selectedDate, null, null);
+    }
+
+    public static AssemblyDashboardResponse empty(LocalDate selectedDate, LocalDateTime from, LocalDateTime to) {
         return new AssemblyDashboardResponse(
                 selectedDate,
+                from,
+                to,
+                null,
+                null,
                 new Summary(0, 0, 0, 0, 0.0),
                 List.of(),
                 null

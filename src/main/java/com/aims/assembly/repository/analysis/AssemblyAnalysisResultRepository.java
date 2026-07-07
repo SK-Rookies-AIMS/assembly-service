@@ -29,6 +29,20 @@ public interface AssemblyAnalysisResultRepository extends JpaRepository<Assembly
     );
 
     @Query("""
+            select assembly
+            from AssemblyAnalysisResult assembly
+            join fetch assembly.analysisResult result
+            where result.processCode = com.aims.assembly.domain.enums.ProcessCode.ASSEMBLY
+              and (:from is null or result.eventTime >= :from)
+              and (:to is null or result.eventTime < :to)
+            order by result.eventTime asc, result.id asc
+            """)
+    List<AssemblyAnalysisResult> findDashboardSummaryRows(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
+    );
+
+    @Query("""
             select result.eventTime
             from AssemblyAnalysisResult assembly
             join assembly.analysisResult result

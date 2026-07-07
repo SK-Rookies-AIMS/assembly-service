@@ -20,12 +20,26 @@ public interface PaintAnalysisResultRepository extends JpaRepository<PaintAnalys
             where result.processCode = com.aims.assembly.domain.enums.ProcessCode.PAINT
               and (:from is null or result.eventTime >= :from)
               and (:to is null or result.eventTime < :to)
-            order by result.eventTime asc, result.id asc
+            order by result.eventTime desc, result.id desc
             """)
     List<PaintAnalysisResult> findDashboardRows(
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to,
             Pageable pageable
+    );
+
+    @Query("""
+            select paint
+            from PaintAnalysisResult paint
+            join fetch paint.analysisResult result
+            where result.processCode = com.aims.assembly.domain.enums.ProcessCode.PAINT
+              and (:from is null or result.eventTime >= :from)
+              and (:to is null or result.eventTime < :to)
+            order by result.eventTime asc, result.id asc
+            """)
+    List<PaintAnalysisResult> findDashboardSummaryRows(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
     );
 
     @Query("""
