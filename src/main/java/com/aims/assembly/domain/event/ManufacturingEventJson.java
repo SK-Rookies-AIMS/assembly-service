@@ -92,4 +92,12 @@ public class ManufacturingEventJson extends BaseEntity {
 
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
+
+    @Builder.Default
+    @Column(name = "bottleneck_analysis_done")
+    private Boolean bottleneckAnalysisDone = false;
+
+    @Builder.Default
+    @Column(name = "defect_transfer_analysis_done")
+    private Boolean defectTransferAnalysisDone = false;
 }
