@@ -275,11 +275,9 @@ public class ManufacturingKafkaConsumer {
     }
 
     static boolean isAbnormalAnalysis(ManufacturingAnalysisEvent analysis) {
-        var result = analysis.analysisResult();
-        return isNonNormalRiskLevel(analysis.riskLevel())
-                || result.isAbnormal() || result.isQualityDefect()
-                || result.isEquipmentFault() || result.isBottleneck()
-                || result.isSequenceError();
+
+        return analysis.analysisResult().isAbnormal();
+
     }
 
     private static boolean isNonNormalRiskLevel(String riskLevel) {
