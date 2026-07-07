@@ -408,4 +408,92 @@ class ManufacturingAnalysisResultServiceTest {
                 new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
         );
     }
+
+    @Test
+    void test1_rawActualSequenceEqualsExpectedSequenceAndAbnormal() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-1", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B03>PA02>A03",
+                                "actualSequence", "P01>B03>PA02>A03"
+                        )
+                )
+        ));
+        ManufacturingAnalysisEvent analysis = new ManufacturingAnalysisEvent(
+                "ANL-1", "EVT-TEST-1", raw.eventTime(), raw.eventTime(),
+                "FAC", "LINE", ProcessCode.ASSEMBLY, "EQ-100", "EQ-NAME", "ROBOT", "PROD", "CAR", raw.carMasterId(),
+                "PROCESS_RISK_ANALYSIS",
+                new ManufacturingAnalysisEvent.RiskScores(0.0, 0.0, 0.0, 0.0, new ManufacturingAnalysisEvent.ProcessRisk(0.0, null, null, null)),
+                90.0, "HIGH",
+                new ManufacturingAnalysisEvent.AnalysisResult(true, false, false, false, false),
+                new ManufacturingAnalysisEvent.Reason("Abnormal", Collections.emptyList()),
+                new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
+        );
+
+        service.save(raw, analysis);
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P01>B03>PA02>A03");
+        assertThat(result.getActualSequence()).isEqualTo("P01>B03>PA02>A03");
+    }
+
+    @Test
+    void test2_rawActualSequenceDiffersFromExpectedSequence() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-2", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B03>PA02>A03",
+                                "actualSequence", "P01>B04>PA02>A03"
+                        )
+                )
+        ));
+
+        service.save(raw, analysisEvent(raw));
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P01>B03>PA02>A03");
+        assertThat(result.getActualSequence()).isEqualTo("P01>B04>PA02>A03");
+    }
+
+    @Test
+    void test3_rawActualSequenceMissing() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-3", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B03>PA02>A03"
+                        )
+                )
+        ));
+
+        service.save(raw, analysisEvent(raw));
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P01>B03>PA02>A03");
+        assertThat(result.getActualSequence()).isNull();
+    }
+
+    @Test
+    void test4_rawExpectedSequenceMissing() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-4", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "actualSequence", "P01>B04>PA02>A03"
+                        )
+                )
+        ));
+
+        service.save(raw, analysisEvent(raw));
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isNull();
+        assertThat(result.getActualSequence()).isEqualTo("P01>B04>PA02>A03");
+    }
 }

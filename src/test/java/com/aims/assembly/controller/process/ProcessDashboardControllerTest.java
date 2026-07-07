@@ -44,36 +44,106 @@ class ProcessDashboardControllerTest {
                 eq(30)
         )).thenReturn(new PaintDashboardResponse(
                 LocalDate.of(2026, 6, 18),
+                LocalDateTime.of(2026, 6, 18, 13, 55),
+                LocalDateTime.of(2026, 6, 18, 14, 25),
+                LocalDateTime.of(2026, 6, 18, 13, 55),
+                LocalDateTime.of(2026, 6, 18, 13, 55),
                 new PaintDashboardResponse.Summary(6, 116.9, 81.2, 50.0, 3, 2.5),
-                List.of(new PaintDashboardResponse.ChartPoint(
-                        LocalDateTime.of(2026, 6, 18, 13, 55),
-                        0.87,
-                        72.3,
-                        116.5,
-                        88.5,
-                        "LEFT",
-                        "DEFECT",
-                        4.2,
-                        "CRITICAL"
-                )),
+                new PaintDashboardResponse.Thresholds(
+                        new PaintDashboardResponse.HigherIsBetterThreshold(
+                                "표면 품질 점수", "점", "HIGHER_IS_BETTER", 80.0, 60.0),
+                        new PaintDashboardResponse.InRangeThreshold(
+                                "도막 두께", "μm", "IN_RANGE_IS_BETTER", 115.0, 90.0, 120.0, 80.0, 130.0),
+                        new PaintDashboardResponse.LowerIsBetterThreshold(
+                                "불량 점수", "", "LOWER_IS_BETTER", 0.4, 0.6),
+                        new PaintDashboardResponse.LowerIsBetterThreshold(
+                                "온도 편차", "℃", "LOWER_IS_BETTER", 2.0, 5.0)
+                ),
+                new PaintDashboardResponse.Charts(
+                        new PaintDashboardResponse.MetricChart(
+                                "표면 품질 점수 추이",
+                                "surfaceQualityScore",
+                                "점",
+                                List.of(new PaintDashboardResponse.MetricPoint(
+                                        LocalDateTime.of(2026, 6, 18, 13, 55),
+                                        72.3,
+                                        "WARNING",
+                                        "DEFECT",
+                                        "LEFT",
+                                        88.5,
+                                        123L
+                                )),
+                                List.of()
+                        ),
+                        new PaintDashboardResponse.MetricChart(
+                                "도막 두께 추이",
+                                "thicknessValue",
+                                "μm",
+                                List.of(new PaintDashboardResponse.MetricPoint(
+                                        LocalDateTime.of(2026, 6, 18, 13, 55),
+                                        116.5,
+                                        "NORMAL",
+                                        "DEFECT",
+                                        "LEFT",
+                                        88.5,
+                                        123L
+                                )),
+                                List.of()
+                        ),
+                        new PaintDashboardResponse.MetricChart(
+                                "불량 점수 추이",
+                                "defectScore",
+                                "",
+                                List.of(new PaintDashboardResponse.MetricPoint(
+                                        LocalDateTime.of(2026, 6, 18, 13, 55),
+                                        0.87,
+                                        "DANGER",
+                                        "DEFECT",
+                                        "LEFT",
+                                        88.5,
+                                        123L
+                                )),
+                                List.of(new PaintDashboardResponse.MetricMarker(
+                                        LocalDateTime.of(2026, 6, 18, 13, 55),
+                                        0.87,
+                                        "DEFECT",
+                                        "LEFT",
+                                        "DANGER",
+                                        123L
+                                ))
+                        ),
+                        new PaintDashboardResponse.MetricChart(
+                                "온도 편차 추이",
+                                "thermalStdTemp",
+                                "℃",
+                                List.of(new PaintDashboardResponse.MetricPoint(
+                                        LocalDateTime.of(2026, 6, 18, 13, 55),
+                                        4.2,
+                                        "DANGER",
+                                        "DEFECT",
+                                        "LEFT",
+                                        88.5,
+                                        123L
+                                )),
+                                List.of()
+                        )
+                ),
                 new PaintDashboardResponse.Alert(
                         "도장 품질 이상 감지",
                         List.of(
                                 "비전 판정: DEFECT",
-                                "이상 위치: LEFT",
-                                "도막 두께: 116.5 μm",
-                                "표면 품질 점수: 72.3점",
-                                "열 편차: 4.2℃",
-                                "위험도: 88.5"
+                                "상태: DANGER"
                         ),
                         new PaintDashboardResponse.Alert.Detail(
+                                LocalDateTime.of(2026, 6, 18, 13, 55),
                                 "DEFECT",
                                 "LEFT",
                                 116.5,
                                 72.3,
+                                0.87,
                                 4.2,
                                 88.5,
-                                "CRITICAL"
+                                "DANGER"
                         )
                 )
         ));
@@ -91,20 +161,24 @@ class ProcessDashboardControllerTest {
                 .andExpect(jsonPath("$.data.summary.defectRate").value(50.0))
                 .andExpect(jsonPath("$.data.summary.alertCount").value(3))
                 .andExpect(jsonPath("$.data.summary.averageThermalStdTemp").value(2.5))
-                .andExpect(jsonPath("$.data.chart[0].defectScore").value(0.87))
-                .andExpect(jsonPath("$.data.chart[0].surfaceQualityScore").value(72.3))
-                .andExpect(jsonPath("$.data.chart[0].imagePosition").value("LEFT"))
-                .andExpect(jsonPath("$.data.chart[0].thicknessValue").value(116.5))
-                .andExpect(jsonPath("$.data.chart[0].riskScore").value(88.5))
+                .andExpect(jsonPath("$.data.thresholds.surfaceQualityScore.warningBelow").value(80.0))
+                .andExpect(jsonPath("$.data.charts.surfaceQuality.points[0].value").value(72.3))
+                .andExpect(jsonPath("$.data.charts.surfaceQuality.points[0].status").value("WARNING"))
+                .andExpect(jsonPath("$.data.charts.thickness.points[0].value").value(116.5))
+                .andExpect(jsonPath("$.data.charts.defectScore.points[0].value").value(0.87))
+                .andExpect(jsonPath("$.data.charts.defectScore.markers[0].label").value("DEFECT"))
+                .andExpect(jsonPath("$.data.charts.thermalStdTemp.points[0].value").value(4.2))
                 .andExpect(jsonPath("$.data.alert.title").value("도장 품질 이상 감지"))
                 .andExpect(jsonPath("$.data.alert.messages[0]").value("비전 판정: DEFECT"))
+                .andExpect(jsonPath("$.data.alert.detail.time").value("2026-06-18T13:55:00"))
                 .andExpect(jsonPath("$.data.alert.detail.visionLabel").value("DEFECT"))
                 .andExpect(jsonPath("$.data.alert.detail.imagePosition").value("LEFT"))
                 .andExpect(jsonPath("$.data.alert.detail.thicknessValue").value(116.5))
                 .andExpect(jsonPath("$.data.alert.detail.surfaceQualityScore").value(72.3))
+                .andExpect(jsonPath("$.data.alert.detail.defectScore").value(0.87))
                 .andExpect(jsonPath("$.data.alert.detail.thermalStdTemp").value(4.2))
                 .andExpect(jsonPath("$.data.alert.detail.riskScore").value(88.5))
-                .andExpect(jsonPath("$.data.alert.detail.severity").value("CRITICAL"));
+                .andExpect(jsonPath("$.data.alert.detail.status").value("DANGER"));
     }
 
     @Test
@@ -189,8 +263,9 @@ class ProcessDashboardControllerTest {
                 .andExpect(jsonPath("$.data.summary.analysisCount").value(0))
                 .andExpect(jsonPath("$.data.summary.averageThicknessValue").value(0.0))
                 .andExpect(jsonPath("$.data.summary.averageThermalStdTemp").value(0.0))
-                .andExpect(jsonPath("$.data.chart").isEmpty())
-                .andExpect(jsonPath("$.data.alert").doesNotExist());
+                .andExpect(jsonPath("$.data.charts.surfaceQuality.points").isEmpty())
+                .andExpect(jsonPath("$.data.charts.defectScore.markers").isEmpty())
+                .andExpect(jsonPath("$.data.alert.title").value("최근 도장 상태 정상"));
 
         mockMvc.perform(get("/api/process/assembly"))
                 .andExpect(status().isOk())

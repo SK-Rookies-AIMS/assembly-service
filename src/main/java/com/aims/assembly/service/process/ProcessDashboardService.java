@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -37,11 +38,20 @@ import java.util.Objects;
 public class ProcessDashboardService {
     private static final int DEFAULT_LIMIT = 30;
     private static final int MAX_LIMIT = 200;
-    private static final double DEFECT_SCORE_ALERT_THRESHOLD = 0.7;
-    private static final double SURFACE_QUALITY_ALERT_THRESHOLD = 85.0;
-    private static final double THICKNESS_MIN = 115.0;
-    private static final double THICKNESS_MAX = 125.0;
-    private static final double THERMAL_STD_TEMP_ALERT_THRESHOLD = 3.0;
+    private static final String STATUS_NORMAL = "NORMAL";
+    private static final String STATUS_WARNING = "WARNING";
+    private static final String STATUS_DANGER = "DANGER";
+    private static final double SURFACE_QUALITY_WARNING_BELOW = 80.0;
+    private static final double SURFACE_QUALITY_DANGER_BELOW = 60.0;
+    private static final double THICKNESS_TARGET = 115.0;
+    private static final double THICKNESS_NORMAL_MIN = 90.0;
+    private static final double THICKNESS_NORMAL_MAX = 120.0;
+    private static final double THICKNESS_WARNING_MIN = 80.0;
+    private static final double THICKNESS_WARNING_MAX = 130.0;
+    private static final double DEFECT_SCORE_WARNING_ABOVE = 0.4;
+    private static final double DEFECT_SCORE_DANGER_ABOVE = 0.6;
+    private static final double THERMAL_STD_TEMP_WARNING_ABOVE = 2.0;
+    private static final double THERMAL_STD_TEMP_DANGER_ABOVE = 5.0;
 
     private final PaintAnalysisResultRepository paintRepository;
     private final AssemblyAnalysisResultRepository assemblyRepository;
@@ -81,13 +91,21 @@ public class ProcessDashboardService {
     ) {
         LocalDate latestDate = date == null && from == null && to == null ? latestPaintDate() : null;
         QueryRange range = queryRange(date, from, to, latestDate);
-        List<PaintAnalysisResult> rows = paintRepository.findDashboardRows(
+        List<PaintAnalysisResult> summaryRows = paintRepository.findDashboardSummaryRows(
+                range.from(),
+                range.to()
+        );
+        List<PaintAnalysisResult> chartRows = sortPaintByEventTimeAsc(paintRepository.findDashboardRows(
                 range.from(),
                 range.to(),
                 PageRequest.of(0, normalizeLimit(limit))
-        );
-        if (rows.isEmpty()) {
-            PaintDashboardResponse emptyResponse = PaintDashboardResponse.empty(range.selectedDate());
+        ));
+        if (summaryRows.isEmpty()) {
+            PaintDashboardResponse emptyResponse = PaintDashboardResponse.empty(
+                    range.selectedDate(),
+                    range.from(),
+                    responseTo(range)
+            );
             log.info(
                     "도장 대시보드 조회 완료: date={}, from={}, to={}, 건수=0",
                     range.selectedDate(),
@@ -97,22 +115,22 @@ public class ProcessDashboardService {
             return emptyResponse;
         }
 
-        long analysisCount = rows.size();
-        long abnormalCount = rows.stream()
-                .filter(row -> Boolean.TRUE.equals(row.getAnalysisResult().getIsAbnormal()))
+        long analysisCount = summaryRows.size();
+        long defectCount = summaryRows.stream()
+                .filter(this::isPaintDefect)
                 .count();
-        long alertCount = rows.stream()
-                .filter(row -> isAlert(row.getAnalysisResult()))
+        long alertCount = summaryRows.stream()
+                .filter(row -> !STATUS_NORMAL.equals(overallPaintStatus(row)))
                 .count();
-        double averageSurfaceQualityScore = average(rows.stream()
-                .map(PaintAnalysisResult::getSurfaceQualityScore)
+        double averageSurfaceQualityScore = average(summaryRows.stream()
+                .map(this::surfaceQualityValue)
                 .filter(Objects::nonNull)
                 .toList());
-        double averageThicknessValue = average(rows.stream()
+        double averageThicknessValue = average(summaryRows.stream()
                 .map(PaintAnalysisResult::getThicknessValue)
                 .filter(Objects::nonNull)
                 .toList());
-        double averageThermalStdTemp = average(rows.stream()
+        double averageThermalStdTemp = average(summaryRows.stream()
                 .map(PaintAnalysisResult::getThermalStdTemp)
                 .filter(Objects::nonNull)
                 .toList());
@@ -121,39 +139,31 @@ public class ProcessDashboardService {
                 analysisCount,
                 averageThicknessValue,
                 averageSurfaceQualityScore,
-                percentage(abnormalCount, analysisCount),
+                percentage(defectCount, analysisCount),
                 alertCount,
                 averageThermalStdTemp
         );
 
-        List<PaintDashboardResponse.ChartPoint> chart = rows.stream()
-                .map(row -> {
-                    ManufacturingAnalysisResult result = row.getAnalysisResult();
-                    return ProcessDashboardResponseMapper.toPaintChartPoint(
-                            displayTime(result),
-                            row.getDefectScore(),
-                            row.getSurfaceQualityScore(),
-                            row.getThicknessValue(),
-                            result.getRiskScore(),
-                            row.getImagePosition(),
-                            row.getVisionLabel(),
-                            row.getThermalStdTemp(),
-                            severityName(result)
-                    );
-                })
-                .toList();
+        PaintDashboardResponse.Charts charts = paintCharts(chartRows);
 
-        PaintAnalysisResult alertRow = rows.stream()
+        PaintAnalysisResult alertRow = summaryRows.stream()
+                .filter(row -> !STATUS_NORMAL.equals(overallPaintStatus(row)))
                 .max(Comparator
-                        .comparing((PaintAnalysisResult row) -> riskScore(row.getAnalysisResult()))
-                        .thenComparing(row -> displayTime(row.getAnalysisResult()),
+                        .comparing((PaintAnalysisResult row) -> displayTime(row.getAnalysisResult()),
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(row -> row.getAnalysisResult().getId(),
                                 Comparator.nullsLast(Comparator.naturalOrder())))
                 .orElse(null);
 
         PaintDashboardResponse response = ProcessDashboardResponseMapper.toPaintDashboardResponse(
                 range.selectedDate(),
+                range.from(),
+                responseTo(range),
+                paintStartAt(chartRows),
+                paintEndAt(chartRows),
                 summary,
-                chart,
+                paintThresholds(),
+                charts,
                 paintAlert(alertRow)
         );
         log.info(
@@ -161,7 +171,7 @@ public class ProcessDashboardService {
                 range.selectedDate(),
                 range.from(),
                 range.to(),
-                rows.size()
+                chartRows.size()
         );
         return response;
     }
@@ -181,13 +191,21 @@ public class ProcessDashboardService {
     ) {
         LocalDate latestDate = date == null && from == null && to == null ? latestAssemblyDate() : null;
         QueryRange range = queryRange(date, from, to, latestDate);
-        List<AssemblyAnalysisResult> rows = assemblyRepository.findDashboardRows(
+        List<AssemblyAnalysisResult> summaryRows = assemblyRepository.findDashboardSummaryRows(
+                range.from(),
+                range.to()
+        );
+        List<AssemblyAnalysisResult> vehicleRows = sortAssemblyByEventTimeAsc(assemblyRepository.findDashboardRows(
                 range.from(),
                 range.to(),
                 PageRequest.of(0, normalizeLimit(limit))
-        );
-        if (rows.isEmpty()) {
-            AssemblyDashboardResponse emptyResponse = AssemblyDashboardResponse.empty(range.selectedDate());
+        ));
+        if (summaryRows.isEmpty()) {
+            AssemblyDashboardResponse emptyResponse = AssemblyDashboardResponse.empty(
+                    range.selectedDate(),
+                    range.from(),
+                    responseTo(range)
+            );
             log.info(
                     "조립 대시보드 조회 완료: date={}, from={}, to={}, 건수=0",
                     range.selectedDate(),
@@ -197,21 +215,21 @@ public class ProcessDashboardService {
             return emptyResponse;
         }
 
-        long vehicleCount = rows.stream()
+        long vehicleCount = summaryRows.stream()
                 .map(row -> row.getAnalysisResult().getCarMasterId())
                 .filter(Objects::nonNull)
                 .distinct()
                 .count();
-        long sequenceErrorCount = sum(rows.stream()
+        long sequenceErrorCount = sum(summaryRows.stream()
                 .map(AssemblyAnalysisResult::getSequenceErrorCount)
                 .toList());
-        long missingPartCount = sum(rows.stream()
+        long missingPartCount = sum(summaryRows.stream()
                 .map(AssemblyAnalysisResult::getMissingPartCount)
                 .toList());
-        long fasteningErrorCount = sum(rows.stream()
+        long fasteningErrorCount = sum(summaryRows.stream()
                 .map(AssemblyAnalysisResult::getFasteningErrorCount)
                 .toList());
-        double averageRiskScore = average(rows.stream()
+        double averageRiskScore = average(summaryRows.stream()
                 .map(row -> row.getAnalysisResult().getRiskScore())
                 .filter(Objects::nonNull)
                 .toList());
@@ -224,7 +242,7 @@ public class ProcessDashboardService {
                 averageRiskScore
         );
 
-        List<AssemblyDashboardResponse.VehicleRow> vehicles = rows.stream()
+        List<AssemblyDashboardResponse.VehicleRow> vehicles = vehicleRows.stream()
                 .map(row -> {
                     ManufacturingAnalysisResult result = row.getAnalysisResult();
                     return ProcessDashboardResponseMapper.toAssemblyVehicleRow(
@@ -243,7 +261,7 @@ public class ProcessDashboardService {
                 })
                 .toList();
 
-        AssemblyAnalysisResult alertRow = rows.stream()
+        AssemblyAnalysisResult alertRow = vehicleRows.stream()
                 .max(Comparator
                         .comparing((AssemblyAnalysisResult row) -> riskScore(row.getAnalysisResult()))
                         .thenComparing(row -> displayTime(row.getAnalysisResult()),
@@ -252,6 +270,10 @@ public class ProcessDashboardService {
 
         AssemblyDashboardResponse response = ProcessDashboardResponseMapper.toAssemblyDashboardResponse(
                 range.selectedDate(),
+                range.from(),
+                responseTo(range),
+                assemblyStartAt(vehicleRows),
+                assemblyEndAt(vehicleRows),
                 summary,
                 vehicles,
                 assemblyAlert(alertRow)
@@ -261,7 +283,7 @@ public class ProcessDashboardService {
                 range.selectedDate(),
                 range.from(),
                 range.to(),
-                rows.size()
+                vehicleRows.size()
         );
         return response;
     }
@@ -334,49 +356,31 @@ public class ProcessDashboardService {
 
     private PaintDashboardResponse.Alert paintAlert(PaintAnalysisResult row) {
         if (row == null) {
-            return null;
+            return ProcessDashboardResponseMapper.toPaintAlert(
+                    "최근 도장 상태 정상",
+                    List.of("선택한 시간 범위 내 신규 위험 알람 없음")
+            );
         }
         ManufacturingAnalysisResult result = row.getAnalysisResult();
+        String status = overallPaintStatus(row);
         List<String> messages = new ArrayList<>();
         messages.add("비전 판정: " + nullToDash(row.getVisionLabel()));
         messages.add("이상 위치: " + nullToDash(row.getImagePosition()));
         messages.add("도막 두께: " + formatNullable(row.getThicknessValue()) + " μm");
-        messages.add("표면 품질 점수: " + formatNullable(row.getSurfaceQualityScore()) + "점");
+        messages.add("표면 품질 점수: " + formatNullable(surfaceQualityValue(row)) + "점");
         messages.add("열 편차: " + formatNullable(row.getThermalStdTemp()) + "℃");
-        messages.add("위험도: " + format(riskScore(result)));
-        if ("DEFECT".equalsIgnoreCase(row.getVisionLabel())) {
-            messages.add("비전 불량 라벨 감지: " + row.getVisionLabel());
-        }
-        if (row.getDefectScore() != null && row.getDefectScore() >= DEFECT_SCORE_ALERT_THRESHOLD) {
-            messages.add("불량 점수 상승: defect_score " + format(row.getDefectScore()));
-        }
-        if (row.getSurfaceQualityScore() != null
-                && row.getSurfaceQualityScore() < SURFACE_QUALITY_ALERT_THRESHOLD) {
-            messages.add("표면 품질 점수 저하: surface_quality_score "
-                    + format(row.getSurfaceQualityScore()));
-        }
-        if (row.getThicknessValue() != null
-                && (row.getThicknessValue() < THICKNESS_MIN || row.getThicknessValue() > THICKNESS_MAX)) {
-            messages.add("도장 두께 이상 의심: thickness_value " + format(row.getThicknessValue()));
-        }
-        if (row.getThermalStdTemp() != null
-                && row.getThermalStdTemp() >= THERMAL_STD_TEMP_ALERT_THRESHOLD) {
-            messages.add("온도 균일도 이상: thermal_std_temp " + format(row.getThermalStdTemp()));
-        }
-        messages.add("위험도/등급: " + format(riskScore(result)) + " / " + severityName(result));
-        if (row.getSurfaceQualityScore() != null && row.getSurfaceQualityScore() < SURFACE_QUALITY_ALERT_THRESHOLD
-                && row.getThicknessValue() != null
-                && (row.getThicknessValue() < THICKNESS_MIN || row.getThicknessValue() > THICKNESS_MAX)) {
-            messages.add("표면 품질 점수 저하 및 두께 이상 의심");
-        }
+        messages.add("불량 점수: " + formatNullable(row.getDefectScore()));
+        messages.add("상태: " + status);
         PaintDashboardResponse.Alert.Detail detail = new PaintDashboardResponse.Alert.Detail(
+                displayTime(result),
                 row.getVisionLabel(),
                 row.getImagePosition(),
                 row.getThicknessValue(),
-                row.getSurfaceQualityScore(),
+                surfaceQualityValue(row),
+                row.getDefectScore(),
                 row.getThermalStdTemp(),
                 result.getRiskScore(),
-                severityName(result)
+                status
         );
         return ProcessDashboardResponseMapper.toPaintAlert("도장 품질 이상 감지", messages, detail);
     }
@@ -464,6 +468,281 @@ public class ProcessDashboardService {
 
     private LocalDateTime displayTime(ManufacturingAnalysisResult result) {
         return result.getEventTime();
+    }
+
+    private PaintDashboardResponse.Thresholds paintThresholds() {
+        return new PaintDashboardResponse.Thresholds(
+                new PaintDashboardResponse.HigherIsBetterThreshold(
+                        "표면 품질 점수",
+                        "점",
+                        "HIGHER_IS_BETTER",
+                        SURFACE_QUALITY_WARNING_BELOW,
+                        SURFACE_QUALITY_DANGER_BELOW
+                ),
+                new PaintDashboardResponse.InRangeThreshold(
+                        "도막 두께",
+                        "μm",
+                        "IN_RANGE_IS_BETTER",
+                        THICKNESS_TARGET,
+                        THICKNESS_NORMAL_MIN,
+                        THICKNESS_NORMAL_MAX,
+                        THICKNESS_WARNING_MIN,
+                        THICKNESS_WARNING_MAX
+                ),
+                new PaintDashboardResponse.LowerIsBetterThreshold(
+                        "불량 점수",
+                        "",
+                        "LOWER_IS_BETTER",
+                        DEFECT_SCORE_WARNING_ABOVE,
+                        DEFECT_SCORE_DANGER_ABOVE
+                ),
+                new PaintDashboardResponse.LowerIsBetterThreshold(
+                        "온도 편차",
+                        "℃",
+                        "LOWER_IS_BETTER",
+                        THERMAL_STD_TEMP_WARNING_ABOVE,
+                        THERMAL_STD_TEMP_DANGER_ABOVE
+                )
+        );
+    }
+
+    private PaintDashboardResponse.Charts paintCharts(List<PaintAnalysisResult> rows) {
+        return new PaintDashboardResponse.Charts(
+                metricChart(
+                        "표면 품질 점수 추이",
+                        "surfaceQualityScore",
+                        "점",
+                        rows.stream()
+                                .map(row -> metricPoint(row, surfaceQualityValue(row), surfaceQualityStatus(row)))
+                                .toList(),
+                        List.of()
+                ),
+                metricChart(
+                        "도막 두께 추이",
+                        "thicknessValue",
+                        "μm",
+                        rows.stream()
+                                .map(row -> metricPoint(row, row.getThicknessValue(), thicknessStatus(row)))
+                                .toList(),
+                        List.of()
+                ),
+                metricChart(
+                        "불량 점수 추이",
+                        "defectScore",
+                        "",
+                        rows.stream()
+                                .map(row -> metricPoint(row, row.getDefectScore(), defectScoreStatus(row)))
+                                .toList(),
+                        rows.stream()
+                                .filter(this::isDefectMarker)
+                                .map(row -> new PaintDashboardResponse.MetricMarker(
+                                        displayTime(row.getAnalysisResult()),
+                                        row.getDefectScore(),
+                                        row.getVisionLabel(),
+                                        row.getImagePosition(),
+                                        defectScoreStatus(row),
+                                        row.getAnalysisResult().getId()
+                                ))
+                                .toList()
+                ),
+                metricChart(
+                        "온도 편차 추이",
+                        "thermalStdTemp",
+                        "℃",
+                        rows.stream()
+                                .map(row -> metricPoint(row, row.getThermalStdTemp(), thermalStdTempStatus(row)))
+                                .toList(),
+                        List.of()
+                )
+        );
+    }
+
+    private PaintDashboardResponse.MetricChart metricChart(
+            String title,
+            String metricKey,
+            String unit,
+            List<PaintDashboardResponse.MetricPoint> points,
+            List<PaintDashboardResponse.MetricMarker> markers
+    ) {
+        return new PaintDashboardResponse.MetricChart(title, metricKey, unit, points, markers);
+    }
+
+    private PaintDashboardResponse.MetricPoint metricPoint(
+            PaintAnalysisResult row,
+            Double value,
+            String status
+    ) {
+        ManufacturingAnalysisResult result = row.getAnalysisResult();
+        return new PaintDashboardResponse.MetricPoint(
+                displayTime(result),
+                value,
+                status,
+                row.getVisionLabel(),
+                row.getImagePosition(),
+                result.getRiskScore(),
+                result.getId()
+        );
+    }
+
+    private Double surfaceQualityValue(PaintAnalysisResult row) {
+        Double value = row.getSurfaceQualityScore();
+        if (value != null
+                && value == 0.0
+                && normalVision(row.getVisionLabel())
+                && (row.getAnalysisResult().getSeverity() == null
+                || row.getAnalysisResult().getSeverity() == Severity.NORMAL)
+                && riskScore(row.getAnalysisResult()) == 0.0) {
+            return null;
+        }
+        return value;
+    }
+
+    private String surfaceQualityStatus(PaintAnalysisResult row) {
+        Double value = surfaceQualityValue(row);
+        if (value == null) {
+            return STATUS_NORMAL;
+        }
+        if (value < SURFACE_QUALITY_DANGER_BELOW) {
+            return STATUS_DANGER;
+        }
+        if (value < SURFACE_QUALITY_WARNING_BELOW) {
+            return STATUS_WARNING;
+        }
+        return STATUS_NORMAL;
+    }
+
+    private String thicknessStatus(PaintAnalysisResult row) {
+        Double value = row.getThicknessValue();
+        if (value == null) {
+            return STATUS_NORMAL;
+        }
+        if (value < THICKNESS_WARNING_MIN || value > THICKNESS_WARNING_MAX) {
+            return STATUS_DANGER;
+        }
+        if (value < THICKNESS_NORMAL_MIN || value > THICKNESS_NORMAL_MAX) {
+            return STATUS_WARNING;
+        }
+        return STATUS_NORMAL;
+    }
+
+    private String defectScoreStatus(PaintAnalysisResult row) {
+        Double value = row.getDefectScore();
+        String status = STATUS_NORMAL;
+        if (value != null && value >= DEFECT_SCORE_DANGER_ABOVE) {
+            status = STATUS_DANGER;
+        } else if (value != null && value >= DEFECT_SCORE_WARNING_ABOVE) {
+            status = STATUS_WARNING;
+        }
+        if (!normalVision(row.getVisionLabel()) && STATUS_NORMAL.equals(status)) {
+            return STATUS_WARNING;
+        }
+        return status;
+    }
+
+    private String thermalStdTempStatus(PaintAnalysisResult row) {
+        Double value = row.getThermalStdTemp();
+        if (value == null) {
+            return STATUS_NORMAL;
+        }
+        if (value >= THERMAL_STD_TEMP_DANGER_ABOVE) {
+            return STATUS_DANGER;
+        }
+        if (value >= THERMAL_STD_TEMP_WARNING_ABOVE) {
+            return STATUS_WARNING;
+        }
+        return STATUS_NORMAL;
+    }
+
+    private String overallPaintStatus(PaintAnalysisResult row) {
+        String status = maxStatus(
+                surfaceQualityStatus(row),
+                thicknessStatus(row),
+                defectScoreStatus(row),
+                thermalStdTempStatus(row)
+        );
+        Severity severity = row.getAnalysisResult().getSeverity();
+        if (severity == Severity.CRITICAL) {
+            return STATUS_DANGER;
+        }
+        if (severity == Severity.WARNING && STATUS_NORMAL.equals(status)) {
+            return STATUS_WARNING;
+        }
+        return status;
+    }
+
+    private String maxStatus(String... statuses) {
+        String result = STATUS_NORMAL;
+        for (String status : statuses) {
+            if (STATUS_DANGER.equals(status)) {
+                return STATUS_DANGER;
+            }
+            if (STATUS_WARNING.equals(status)) {
+                result = STATUS_WARNING;
+            }
+        }
+        return result;
+    }
+
+    private boolean isDefectMarker(PaintAnalysisResult row) {
+        String status = defectScoreStatus(row);
+        return isPaintDefect(row);
+    }
+
+    private boolean isPaintDefect(PaintAnalysisResult row) {
+        String status = defectScoreStatus(row);
+        return !normalVision(row.getVisionLabel())
+                || STATUS_WARNING.equals(status)
+                || STATUS_DANGER.equals(status);
+    }
+
+    private boolean normalVision(String visionLabel) {
+        return visionLabel == null || STATUS_NORMAL.equalsIgnoreCase(visionLabel);
+    }
+
+    private List<PaintAnalysisResult> sortPaintByEventTimeAsc(List<PaintAnalysisResult> rows) {
+        return rows.stream()
+                .sorted(Comparator
+                        .comparing((PaintAnalysisResult row) -> displayTime(row.getAnalysisResult()),
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(row -> row.getAnalysisResult().getId(),
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+    }
+
+    private List<AssemblyAnalysisResult> sortAssemblyByEventTimeAsc(List<AssemblyAnalysisResult> rows) {
+        return rows.stream()
+                .sorted(Comparator
+                        .comparing((AssemblyAnalysisResult row) -> displayTime(row.getAnalysisResult()),
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(row -> row.getAnalysisResult().getId(),
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+    }
+
+    private LocalDateTime paintStartAt(List<PaintAnalysisResult> rows) {
+        return rows.isEmpty() ? null : displayTime(rows.get(0).getAnalysisResult());
+    }
+
+    private LocalDateTime paintEndAt(List<PaintAnalysisResult> rows) {
+        return rows.isEmpty() ? null : displayTime(rows.get(rows.size() - 1).getAnalysisResult());
+    }
+
+    private LocalDateTime assemblyStartAt(List<AssemblyAnalysisResult> rows) {
+        return rows.isEmpty() ? null : displayTime(rows.get(0).getAnalysisResult());
+    }
+
+    private LocalDateTime assemblyEndAt(List<AssemblyAnalysisResult> rows) {
+        return rows.isEmpty() ? null : displayTime(rows.get(rows.size() - 1).getAnalysisResult());
+    }
+
+    private LocalDateTime responseTo(QueryRange range) {
+        if (range.selectedDate() != null && range.to() != null) {
+            LocalDateTime nextDayStart = range.selectedDate().plusDays(1).atStartOfDay();
+            if (nextDayStart.equals(range.to())) {
+                return LocalDateTime.of(range.selectedDate(), LocalTime.MAX);
+            }
+        }
+        return range.to();
     }
 
     private boolean isAlert(ManufacturingAnalysisResult result) {

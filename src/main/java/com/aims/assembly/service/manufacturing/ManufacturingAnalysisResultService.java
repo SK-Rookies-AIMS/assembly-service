@@ -885,7 +885,11 @@ public class ManufacturingAnalysisResultService {
         double riskScore = savedResult.getRiskScore() == null ? 0.0 : savedResult.getRiskScore();
 
         if (expectedSequence == null || isNullText(expectedSequence)) {
-            expectedSequence = "PART_CHECK->FASTENING->TORQUE_CHECK->FINAL_INSPECTION";
+            expectedSequence = null;
+        }
+
+        if (actualSequence == null || isNullText(actualSequence)) {
+            actualSequence = null;
         }
 
         int seqVariation = eventIdIndex(savedResult.getEventId() + ":assembly:seq", 3);
@@ -904,19 +908,10 @@ public class ManufacturingAnalysisResultService {
             if (fasteningErrorCount == null || fasteningErrorCount <= 0) {
                 fasteningErrorCount = riskScore >= 80 ? 2 + fasteningVariation : 1 + fasteningVariation;
             }
-
-            if (actualSequence == null || isNullText(actualSequence)
-                    || actualSequence.equals(expectedSequence)) {
-                actualSequence = resolveAssemblyActualSequence(savedResult);
-            }
         } else {
             if (sequenceErrorCount == null) sequenceErrorCount = 0;
             if (missingPartCount == null) missingPartCount = 0;
             if (fasteningErrorCount == null) fasteningErrorCount = 0;
-
-            if (actualSequence == null || isNullText(actualSequence)) {
-                actualSequence = expectedSequence;
-            }
         }
 
         return new AssemblyCalculatedValues(
@@ -926,16 +921,6 @@ public class ManufacturingAnalysisResultService {
                 Math.max(missingPartCount, 0),
                 Math.max(fasteningErrorCount, 0)
         );
-    }
-
-    private String resolveAssemblyActualSequence(ManufacturingAnalysisResult savedResult) {
-        String[] abnormalSequences = {
-                "PART_CHECK->TORQUE_CHECK->FASTENING->FINAL_INSPECTION",
-                "PART_CHECK->FASTENING->FINAL_INSPECTION",
-                "FASTENING->PART_CHECK->TORQUE_CHECK->FINAL_INSPECTION",
-                "PART_CHECK->FASTENING->TORQUE_RETRY->FINAL_INSPECTION"
-        };
-        return abnormalSequences[eventIdIndex(savedResult.getEventId(), abnormalSequences.length)];
     }
 
     private record AssemblyCalculatedValues(

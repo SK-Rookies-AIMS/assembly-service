@@ -50,11 +50,26 @@ public final class ProcessDashboardResponseMapper {
 
     public static PaintDashboardResponse toPaintDashboardResponse(
             LocalDate selectedDate,
+            LocalDateTime from,
+            LocalDateTime to,
+            LocalDateTime chartStartAt,
+            LocalDateTime chartEndAt,
             PaintDashboardResponse.Summary summary,
-            List<PaintDashboardResponse.ChartPoint> chart,
+            PaintDashboardResponse.Thresholds thresholds,
+            PaintDashboardResponse.Charts charts,
             PaintDashboardResponse.Alert alert
     ) {
-        return new PaintDashboardResponse(selectedDate, summary, chart, alert);
+        return new PaintDashboardResponse(
+                selectedDate,
+                from,
+                to,
+                chartStartAt,
+                chartEndAt,
+                summary,
+                thresholds,
+                charts,
+                alert
+        );
     }
 
     public static PaintDashboardResponse.Summary toPaintSummary(
@@ -84,30 +99,6 @@ public final class ProcessDashboardResponseMapper {
         );
     }
 
-    public static PaintDashboardResponse.ChartPoint toPaintChartPoint(
-            LocalDateTime time,
-            Double defectScore,
-            Double surfaceQualityScore,
-            Double thicknessValue,
-            Double riskScore,
-            String imagePosition,
-            String visionLabel,
-            Double thermalStdTemp,
-            String severity
-    ) {
-        return new PaintDashboardResponse.ChartPoint(
-                time,
-                defectScore,
-                surfaceQualityScore,
-                thicknessValue,
-                riskScore,
-                imagePosition,
-                visionLabel,
-                thermalStdTemp,
-                severity
-        );
-    }
-
     public static PaintDashboardResponse.Alert toPaintAlert(String title, List<String> messages) {
         return new PaintDashboardResponse.Alert(title, messages);
     }
@@ -122,11 +113,15 @@ public final class ProcessDashboardResponseMapper {
 
     public static AssemblyDashboardResponse toAssemblyDashboardResponse(
             LocalDate selectedDate,
+            LocalDateTime from,
+            LocalDateTime to,
+            LocalDateTime dataStartAt,
+            LocalDateTime dataEndAt,
             AssemblyDashboardResponse.Summary summary,
             List<AssemblyDashboardResponse.VehicleRow> vehicles,
             AssemblyDashboardResponse.Alert alert
     ) {
-        return new AssemblyDashboardResponse(selectedDate, summary, vehicles, alert);
+        return new AssemblyDashboardResponse(selectedDate, from, to, dataStartAt, dataEndAt, summary, vehicles, alert);
     }
 
     public static AssemblyDashboardResponse.Summary toAssemblySummary(
