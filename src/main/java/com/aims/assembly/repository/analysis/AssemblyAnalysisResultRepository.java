@@ -18,9 +18,9 @@ public interface AssemblyAnalysisResultRepository extends JpaRepository<Assembly
             from AssemblyAnalysisResult assembly
             join fetch assembly.analysisResult result
             where result.processCode = com.aims.assembly.domain.enums.ProcessCode.ASSEMBLY
-              and (:from is null or result.analyzedAt >= :from)
-              and (:to is null or result.analyzedAt < :to)
-            order by result.analyzedAt desc, result.eventTime desc, result.id desc
+              and (:from is null or result.eventTime >= :from)
+              and (:to is null or result.eventTime < :to)
+            order by result.eventTime desc, result.id desc
             """)
     List<AssemblyAnalysisResult> findDashboardRows(
             @Param("from") LocalDateTime from,
@@ -29,12 +29,12 @@ public interface AssemblyAnalysisResultRepository extends JpaRepository<Assembly
     );
 
     @Query("""
-            select result.analyzedAt
+            select result.eventTime
             from AssemblyAnalysisResult assembly
             join assembly.analysisResult result
             where result.processCode = com.aims.assembly.domain.enums.ProcessCode.ASSEMBLY
-              and result.analyzedAt is not null
-            order by result.analyzedAt asc
+              and result.eventTime is not null
+            order by result.eventTime asc
             """)
-    List<LocalDateTime> findDashboardAnalyzedAtValues();
+    List<LocalDateTime> findDashboardEventTimeValues();
 }

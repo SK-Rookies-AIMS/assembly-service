@@ -108,12 +108,22 @@ public class ProcessDashboardService {
                 .map(PaintAnalysisResult::getSurfaceQualityScore)
                 .filter(Objects::nonNull)
                 .toList());
+        double averageThicknessValue = average(rows.stream()
+                .map(PaintAnalysisResult::getThicknessValue)
+                .filter(Objects::nonNull)
+                .toList());
+        double averageThermalStdTemp = average(rows.stream()
+                .map(PaintAnalysisResult::getThermalStdTemp)
+                .filter(Objects::nonNull)
+                .toList());
 
         PaintDashboardResponse.Summary summary = ProcessDashboardResponseMapper.toPaintSummary(
                 analysisCount,
-                percentage(abnormalCount, analysisCount),
+                averageThicknessValue,
                 averageSurfaceQualityScore,
-                alertCount
+                percentage(abnormalCount, analysisCount),
+                alertCount,
+                averageThermalStdTemp
         );
 
         List<PaintDashboardResponse.ChartPoint> chart = rows.stream()
@@ -328,6 +338,12 @@ public class ProcessDashboardService {
         }
         ManufacturingAnalysisResult result = row.getAnalysisResult();
         List<String> messages = new ArrayList<>();
+        messages.add("비전 판정: " + nullToDash(row.getVisionLabel()));
+        messages.add("이상 위치: " + nullToDash(row.getImagePosition()));
+        messages.add("도막 두께: " + formatNullable(row.getThicknessValue()) + " μm");
+        messages.add("표면 품질 점수: " + formatNullable(row.getSurfaceQualityScore()) + "점");
+        messages.add("열 편차: " + formatNullable(row.getThermalStdTemp()) + "℃");
+        messages.add("위험도: " + format(riskScore(result)));
         if ("DEFECT".equalsIgnoreCase(row.getVisionLabel())) {
             messages.add("비전 불량 라벨 감지: " + row.getVisionLabel());
         }
@@ -353,7 +369,16 @@ public class ProcessDashboardService {
                 && (row.getThicknessValue() < THICKNESS_MIN || row.getThicknessValue() > THICKNESS_MAX)) {
             messages.add("표면 품질 점수 저하 및 두께 이상 의심");
         }
-        return ProcessDashboardResponseMapper.toPaintAlert("도장 품질 이상 감지", messages);
+        PaintDashboardResponse.Alert.Detail detail = new PaintDashboardResponse.Alert.Detail(
+                row.getVisionLabel(),
+                row.getImagePosition(),
+                row.getThicknessValue(),
+                row.getSurfaceQualityScore(),
+                row.getThermalStdTemp(),
+                result.getRiskScore(),
+                severityName(result)
+        );
+        return ProcessDashboardResponseMapper.toPaintAlert("도장 품질 이상 감지", messages, detail);
     }
 
     private AssemblyDashboardResponse.Alert assemblyAlert(AssemblyAnalysisResult row) {
@@ -402,11 +427,11 @@ public class ProcessDashboardService {
     }
 
     private List<LocalDate> availablePaintDates() {
-        return availableDates(paintRepository.findDashboardAnalyzedAtValues());
+        return availableDates(paintRepository.findDashboardEventTimeValues());
     }
 
     private List<LocalDate> availableAssemblyDates() {
-        return availableDates(assemblyRepository.findDashboardAnalyzedAtValues());
+        return availableDates(assemblyRepository.findDashboardEventTimeValues());
     }
 
     private LocalDate latestPaintDate() {
@@ -438,7 +463,7 @@ public class ProcessDashboardService {
     }
 
     private LocalDateTime displayTime(ManufacturingAnalysisResult result) {
-        return result.getAnalyzedAt() != null ? result.getAnalyzedAt() : result.getEventTime();
+        return result.getEventTime();
     }
 
     private boolean isAlert(ManufacturingAnalysisResult result) {
@@ -500,6 +525,10 @@ public class ProcessDashboardService {
 
     private String nullToDash(String value) {
         return value == null || value.isBlank() ? "-" : value;
+    }
+
+    private String formatNullable(Double value) {
+        return value == null ? "-" : format(value);
     }
 
     private double round(double value) {

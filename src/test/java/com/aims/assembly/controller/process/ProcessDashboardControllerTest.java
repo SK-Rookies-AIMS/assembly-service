@@ -44,7 +44,7 @@ class ProcessDashboardControllerTest {
                 eq(30)
         )).thenReturn(new PaintDashboardResponse(
                 LocalDate.of(2026, 6, 18),
-                new PaintDashboardResponse.Summary(6, 50.0, 81.2, 3),
+                new PaintDashboardResponse.Summary(6, 116.9, 81.2, 50.0, 3, 2.5),
                 List.of(new PaintDashboardResponse.ChartPoint(
                         LocalDateTime.of(2026, 6, 18, 13, 55),
                         0.87,
@@ -58,7 +58,23 @@ class ProcessDashboardControllerTest {
                 )),
                 new PaintDashboardResponse.Alert(
                         "도장 품질 이상 감지",
-                        List.of("비전 불량 라벨 감지: DEFECT")
+                        List.of(
+                                "비전 판정: DEFECT",
+                                "이상 위치: LEFT",
+                                "도막 두께: 116.5 μm",
+                                "표면 품질 점수: 72.3점",
+                                "열 편차: 4.2℃",
+                                "위험도: 88.5"
+                        ),
+                        new PaintDashboardResponse.Alert.Detail(
+                                "DEFECT",
+                                "LEFT",
+                                116.5,
+                                72.3,
+                                4.2,
+                                88.5,
+                                "CRITICAL"
+                        )
                 )
         ));
 
@@ -70,11 +86,25 @@ class ProcessDashboardControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.selectedDate").value("2026-06-18"))
                 .andExpect(jsonPath("$.data.summary.analysisCount").value(6))
+                .andExpect(jsonPath("$.data.summary.averageThicknessValue").value(116.9))
+                .andExpect(jsonPath("$.data.summary.averageSurfaceQualityScore").value(81.2))
+                .andExpect(jsonPath("$.data.summary.defectRate").value(50.0))
+                .andExpect(jsonPath("$.data.summary.alertCount").value(3))
+                .andExpect(jsonPath("$.data.summary.averageThermalStdTemp").value(2.5))
                 .andExpect(jsonPath("$.data.chart[0].defectScore").value(0.87))
                 .andExpect(jsonPath("$.data.chart[0].surfaceQualityScore").value(72.3))
                 .andExpect(jsonPath("$.data.chart[0].imagePosition").value("LEFT"))
                 .andExpect(jsonPath("$.data.chart[0].thicknessValue").value(116.5))
-                .andExpect(jsonPath("$.data.alert.title").value("도장 품질 이상 감지"));
+                .andExpect(jsonPath("$.data.chart[0].riskScore").value(88.5))
+                .andExpect(jsonPath("$.data.alert.title").value("도장 품질 이상 감지"))
+                .andExpect(jsonPath("$.data.alert.messages[0]").value("비전 판정: DEFECT"))
+                .andExpect(jsonPath("$.data.alert.detail.visionLabel").value("DEFECT"))
+                .andExpect(jsonPath("$.data.alert.detail.imagePosition").value("LEFT"))
+                .andExpect(jsonPath("$.data.alert.detail.thicknessValue").value(116.5))
+                .andExpect(jsonPath("$.data.alert.detail.surfaceQualityScore").value(72.3))
+                .andExpect(jsonPath("$.data.alert.detail.thermalStdTemp").value(4.2))
+                .andExpect(jsonPath("$.data.alert.detail.riskScore").value(88.5))
+                .andExpect(jsonPath("$.data.alert.detail.severity").value("CRITICAL"));
     }
 
     @Test
@@ -157,6 +187,8 @@ class ProcessDashboardControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.selectedDate").doesNotExist())
                 .andExpect(jsonPath("$.data.summary.analysisCount").value(0))
+                .andExpect(jsonPath("$.data.summary.averageThicknessValue").value(0.0))
+                .andExpect(jsonPath("$.data.summary.averageThermalStdTemp").value(0.0))
                 .andExpect(jsonPath("$.data.chart").isEmpty())
                 .andExpect(jsonPath("$.data.alert").doesNotExist());
 

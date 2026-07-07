@@ -66,6 +66,24 @@ public final class ProcessDashboardResponseMapper {
         return new PaintDashboardResponse.Summary(analysisCount, defectRate, averageSurfaceQualityScore, alertCount);
     }
 
+    public static PaintDashboardResponse.Summary toPaintSummary(
+            long analysisCount,
+            double averageThicknessValue,
+            double averageSurfaceQualityScore,
+            double defectRate,
+            long alertCount,
+            double averageThermalStdTemp
+    ) {
+        return new PaintDashboardResponse.Summary(
+                analysisCount,
+                averageThicknessValue,
+                averageSurfaceQualityScore,
+                defectRate,
+                alertCount,
+                averageThermalStdTemp
+        );
+    }
+
     public static PaintDashboardResponse.ChartPoint toPaintChartPoint(
             LocalDateTime time,
             Double defectScore,
@@ -92,6 +110,14 @@ public final class ProcessDashboardResponseMapper {
 
     public static PaintDashboardResponse.Alert toPaintAlert(String title, List<String> messages) {
         return new PaintDashboardResponse.Alert(title, messages);
+    }
+
+    public static PaintDashboardResponse.Alert toPaintAlert(
+            String title,
+            List<String> messages,
+            PaintDashboardResponse.Alert.Detail detail
+    ) {
+        return new PaintDashboardResponse.Alert(title, messages, detail);
     }
 
     public static AssemblyDashboardResponse toAssemblyDashboardResponse(
