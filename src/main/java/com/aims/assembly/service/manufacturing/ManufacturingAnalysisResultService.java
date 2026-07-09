@@ -50,8 +50,8 @@ public class ManufacturingAnalysisResultService {
      */
     @Transactional
     @CacheEvict(cacheNames = {
-            "press-anomaly-dashboard-v2",
-            "body-anomaly-dashboard-v2",
+            "press-anomaly-dashboard",
+            "body-anomaly-dashboard",
             "paint-anomaly-dashboard-v2",
             "process-paint-dashboard-v1",
             "process-assembly-dashboard-v1",

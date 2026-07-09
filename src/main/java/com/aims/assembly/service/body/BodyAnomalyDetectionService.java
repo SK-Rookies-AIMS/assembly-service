@@ -59,7 +59,7 @@ public class BodyAnomalyDetectionService {
     private final ObjectMapper objectMapper;
 
     @Cacheable(
-            cacheNames = "body-anomaly-dashboard-v3",
+            cacheNames = "body-anomaly-dashboard",
             key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
     )
     public BodyAnomalyDetectionResponse findDashboard(
@@ -102,23 +102,37 @@ public class BodyAnomalyDetectionService {
         boolean detected = points.stream().anyMatch(this::isBodyAnomaly);
         LocalDateTime previousEndAt = points.isEmpty() ? null : points.get(0).timestamp().minusNanos(1);
 
-        double maxRiskScore = points.stream()
-                .mapToDouble(p -> p.riskScore() != null ? p.riskScore() : 0.0)
+        Double averageRobotVibrationScore = average(points, BodyAnomalyDetectionResponse.ChartPoint::robotVibrationScore);
+        Double averageVibrationPeak = average(points, BodyAnomalyDetectionResponse.ChartPoint::vibrationPeak);
+        Double averageVibrationRms = average(points, BodyAnomalyDetectionResponse.ChartPoint::vibrationRms);
+        Double averageFrequencyPeakValue = average(points, BodyAnomalyDetectionResponse.ChartPoint::frequencyPeakValue);
+        Double maxRiskScore = points.stream()
+                .map(BodyAnomalyDetectionResponse.ChartPoint::riskScore)
+                .filter(value -> value != null)
+                .mapToDouble(Double::doubleValue)
                 .max()
                 .orElse(0.0);
 
         BodyAnomalyDetectionResponse.ChartPoint latest = points.isEmpty() ? null : points.get(points.size() - 1);
-        BodyAnomalyDetectionResponse.ChartPoint summaryPoint = points.stream()
-                .filter(this::isBodyAnomaly)
-                .max(Comparator.comparingDouble(this::anomalyWeight)
-                        .thenComparing(BodyAnomalyDetectionResponse.ChartPoint::timestamp,
-                                Comparator.nullsLast(Comparator.naturalOrder())))
-                .orElse(latest);
+        BodyAnomalyDetectionResponse.ChartPoint summaryPoint = selectRepresentativePoint(
+                points,
+                averageRobotVibrationScore,
+                averageFrequencyPeakValue
+        ).orElse(latest);
 
         BodyAnalysisResult summaryResult = summaryPoint == null ? null
                 : repository.findByAnalysisResult_AnalysisId(summaryPoint.analysisId()).orElse(null);
 
-        BodyAnomalyDetectionResponse.Metrics metrics = toMetrics(summaryResult, summaryPoint, detected, maxRiskScore);
+        BodyAnomalyDetectionResponse.Metrics metrics = toMetrics(
+                summaryResult,
+                summaryPoint,
+                detected,
+                averageRobotVibrationScore,
+                averageVibrationPeak,
+                averageVibrationRms,
+                averageFrequencyPeakValue,
+                maxRiskScore
+        );
 
         List<BodyAnomalyDetectionResponse.RobotMetricPoint> robotVibrationPoints = points.stream()
                 .map(point -> BodyAnomalyDetectionResponseMapper.toRobotMetricPoint(
@@ -249,7 +263,11 @@ public class BodyAnomalyDetectionService {
             BodyAnalysisResult result,
             BodyAnomalyDetectionResponse.ChartPoint point,
             boolean detected,
-            double maxRiskScore
+            Double averageRobotVibrationScore,
+            Double averageVibrationPeak,
+            Double averageVibrationRms,
+            Double averageFrequencyPeakValue,
+            Double riskScore
     ) {
         String severity = detected ? "WARNING" : "NORMAL";
         if (point != null && point.severity() != null && !detected) {
@@ -271,16 +289,16 @@ public class BodyAnomalyDetectionService {
                 return BodyAnomalyDetectionResponseMapper.toMetrics(
                         localizeRobotMotionStatus(bodyData.robotMotionStatus()),
                         localizeRobotOperationMode(bodyData.robotOperationMode() != null ? bodyData.robotOperationMode() : "NORMAL"),
-                        pointRobotVibrationScore,
-                        pointVibrationPeak,
-                        pointVibrationRms,
-                        localizeFrequencyPeakBand(bodyData.frequencyPeakBand()),
-                        pointFrequencyPeakValue,
+                        averageRobotVibrationScore != null ? averageRobotVibrationScore : pointRobotVibrationScore,
+                        averageVibrationPeak != null ? averageVibrationPeak : pointVibrationPeak,
+                        averageVibrationRms != null ? averageVibrationRms : pointVibrationRms,
+                        localizeFrequencyPeakBand(resolveFrequencyPeakBand(bodyData.frequencyBands(), averageFrequencyPeakValue, bodyData.frequencyPeakBand())),
+                        averageFrequencyPeakValue != null ? averageFrequencyPeakValue : pointFrequencyPeakValue,
                         ROBOT_VIBRATION_WARNING_LINE,
                         ROBOT_VIBRATION_DANGER_LINE,
                         PEAK_WARNING_LINE,
                         PEAK_DANGER_LINE,
-                        maxRiskScore,
+                        riskScore != null ? riskScore : 0.0,
                         "0-100",
                         severity,
                         summarizeFrequencyBands(bodyData.frequencyBands())
@@ -290,16 +308,16 @@ public class BodyAnomalyDetectionService {
             return BodyAnomalyDetectionResponseMapper.toMetrics(
                     null,
                     "정상",
-                    pointRobotVibrationScore,
-                    pointVibrationPeak,
-                    pointVibrationRms,
+                    averageRobotVibrationScore != null ? averageRobotVibrationScore : pointRobotVibrationScore,
+                    averageVibrationPeak != null ? averageVibrationPeak : pointVibrationPeak,
+                    averageVibrationRms != null ? averageVibrationRms : pointVibrationRms,
                     null,
-                    pointFrequencyPeakValue,
+                    averageFrequencyPeakValue != null ? averageFrequencyPeakValue : pointFrequencyPeakValue,
                     ROBOT_VIBRATION_WARNING_LINE,
                     ROBOT_VIBRATION_DANGER_LINE,
                     PEAK_WARNING_LINE,
                     PEAK_DANGER_LINE,
-                    maxRiskScore,
+                    riskScore != null ? riskScore : 0.0,
                     "0-100",
                     severity,
                     new HashMap<>()
@@ -309,16 +327,16 @@ public class BodyAnomalyDetectionService {
         return BodyAnomalyDetectionResponseMapper.toMetrics(
                 localizeRobotMotionStatus(result.getRobotMotionStatus()),
                 localizeRobotOperationMode(result.getRobotOperationMode() != null ? result.getRobotOperationMode() : "NORMAL"),
-                pointRobotVibrationScore != null ? pointRobotVibrationScore : result.getRobotVibrationScore(),
-                pointVibrationPeak,
-                pointVibrationRms,
-                localizeFrequencyPeakBand(result.getFrequencyPeakBand()),
-                result.getFrequencyPeakValue(),
+                averageRobotVibrationScore != null ? averageRobotVibrationScore : (pointRobotVibrationScore != null ? pointRobotVibrationScore : result.getRobotVibrationScore()),
+                averageVibrationPeak != null ? averageVibrationPeak : pointVibrationPeak,
+                averageVibrationRms != null ? averageVibrationRms : pointVibrationRms,
+                localizeFrequencyPeakBand(resolveFrequencyPeakBand(parseFrequencyBands(result.getFrequencyBandsJson()), averageFrequencyPeakValue, result.getFrequencyPeakBand())),
+                averageFrequencyPeakValue != null ? averageFrequencyPeakValue : result.getFrequencyPeakValue(),
                 ROBOT_VIBRATION_WARNING_LINE,
                 ROBOT_VIBRATION_DANGER_LINE,
                 PEAK_WARNING_LINE,
                 PEAK_DANGER_LINE,
-                maxRiskScore,
+                riskScore != null ? riskScore : 0.0,
                 "0-100",
                 severity,
                 summarizeFrequencyBands(parseFrequencyBands(result.getFrequencyBandsJson()))
@@ -494,6 +512,59 @@ public class BodyAnomalyDetectionService {
         return new HashMap<>();
     }
 
+    private <T> Double average(List<T> points, java.util.function.Function<T, Double> extractor) {
+        if (points == null || points.isEmpty()) {
+            return null;
+        }
+        return points.stream()
+                .map(extractor)
+                .filter(value -> value != null)
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElse(0.0);
+    }
+
+    private java.util.Optional<BodyAnomalyDetectionResponse.ChartPoint> selectRepresentativePoint(
+            List<BodyAnomalyDetectionResponse.ChartPoint> points,
+            Double averageRobotVibrationScore,
+            Double averageFrequencyPeakValue
+    ) {
+        if (points == null || points.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+
+        if (averageRobotVibrationScore == null && averageFrequencyPeakValue == null) {
+            return points.stream()
+                    .filter(this::isBodyAnomaly)
+                    .max(Comparator.comparingDouble(this::anomalyWeight)
+                            .thenComparing(BodyAnomalyDetectionResponse.ChartPoint::timestamp,
+                                    Comparator.nullsLast(Comparator.naturalOrder())));
+        }
+
+        return points.stream()
+                .filter(this::isBodyAnomaly)
+                .min(Comparator.comparingDouble(point -> representativeDistance(
+                        point,
+                        averageRobotVibrationScore,
+                        averageFrequencyPeakValue
+                )));
+    }
+
+    private double representativeDistance(
+            BodyAnomalyDetectionResponse.ChartPoint point,
+            Double averageRobotVibrationScore,
+            Double averageFrequencyPeakValue
+    ) {
+        double distance = 0.0;
+        if (averageRobotVibrationScore != null && point.robotVibrationScore() != null) {
+            distance += Math.abs(point.robotVibrationScore() - averageRobotVibrationScore);
+        }
+        if (averageFrequencyPeakValue != null && point.frequencyPeakValue() != null) {
+            distance += Math.abs(point.frequencyPeakValue() - averageFrequencyPeakValue);
+        }
+        return distance;
+    }
+
     private int frequencyBandOrder(String rawKey) {
         int[] range = extractBandRange(rawKey);
         if (range != null) {
@@ -542,6 +613,34 @@ public class BodyAnomalyDetectionService {
             return range[0] + "~" + range[1] + "Hz";
         }
         return formatFrequencyBand(raw);
+    }
+
+    private String resolveFrequencyPeakBand(
+            Map<String, Double> bands,
+            Double averageFrequencyPeakValue,
+            String fallbackBand
+    ) {
+        if (bands == null || bands.isEmpty()) {
+            return fallbackBand;
+        }
+        if (averageFrequencyPeakValue == null) {
+            return fallbackBand;
+        }
+
+        String bestBand = fallbackBand;
+        double bestDistance = Double.MAX_VALUE;
+        for (Map.Entry<String, Double> entry : bands.entrySet()) {
+            Double value = entry.getValue();
+            if (value == null) {
+                continue;
+            }
+            double distance = Math.abs(value - averageFrequencyPeakValue);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestBand = entry.getKey();
+            }
+        }
+        return bestBand;
     }
 
     private String localizeFrequencyBandKey(String raw) {
@@ -633,7 +732,7 @@ public class BodyAnomalyDetectionService {
         }
 
         if (abnormalCount > 0) {
-            reasons.add("이상 포인트 수 = " + abnormalCount);
+            reasons.add("이상 탐지 건수 = " + abnormalCount);
         }
         if (maxRobotVibrationScore > 0) {
             reasons.add(String.format("최대 로봇 진동 점수 = %.2f", maxRobotVibrationScore));

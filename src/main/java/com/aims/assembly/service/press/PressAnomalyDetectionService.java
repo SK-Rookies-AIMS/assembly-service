@@ -31,7 +31,7 @@ public class PressAnomalyDetectionService {
     private final ManufacturingEventJsonRepository eventRepository;
 
     @Cacheable(
-            cacheNames = "press-anomaly-dashboard-v2",
+            cacheNames = "press-anomaly-dashboard",
             key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
     )
     public PressAnomalyDetectionResponse findDashboard(

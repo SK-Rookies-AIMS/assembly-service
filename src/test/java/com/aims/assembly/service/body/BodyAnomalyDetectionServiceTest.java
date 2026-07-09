@@ -81,8 +81,8 @@ class BodyAnomalyDetectionServiceTest {
 
         assertThat(response.metrics().robotMotionStatus()).isEqualTo("COLLISION_RISK");
         assertThat(response.metrics().robotOperationMode()).isEqualTo("AUTO_MANUAL_STOPPED");
-        assertThat(response.metrics().robotVibrationScore()).isEqualTo(0.27);
-        assertThat(response.metrics().frequencyPeakValue()).isEqualTo(2.907113);
+        assertThat(response.metrics().avgRobotVibrationScore()).isEqualTo(0.27);
+        assertThat(response.metrics().avgFrequencyPeakValue()).isEqualTo(2.907113);
         assertThat(response.metrics().frequencyPeakBand()).isEqualTo("501_600_HZ");
         assertThat(response.metrics().vibrationWarningLine()).isEqualTo(0.75);
         assertThat(response.metrics().vibrationDangerLine()).isEqualTo(1.25);
@@ -115,7 +115,8 @@ class BodyAnomalyDetectionServiceTest {
                 "robot_motion_status = COLLISION_RISK",
                 "robot_operation_mode = AUTO_MANUAL_STOPPED",
                 "peak vibration increased (2.907113 mm/s)",
-                "frequency peak band = 501-600Hz"
+                "frequency peak band = 501-600Hz",
+                "이상 탐지 건수 = 1"
         );
     }
 

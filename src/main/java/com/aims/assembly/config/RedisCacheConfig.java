@@ -63,8 +63,8 @@ public class RedisCacheConfig implements CachingConfigurer {
 
         return RedisCacheManager.builder(redisConnectionFactory)
                 .cacheDefaults(cacheConfig)
-                .withCacheConfiguration("press-anomaly-dashboard-v2", cacheConfig)
-                .withCacheConfiguration("body-anomaly-dashboard-v2", cacheConfig)
+                .withCacheConfiguration("press-anomaly-dashboard", cacheConfig)
+                .withCacheConfiguration("body-anomaly-dashboard", cacheConfig)
                 .withCacheConfiguration("process-paint-dashboard-v1",
                         cacheConfig.entryTtl(Duration.ofMinutes(3)))
                 .withCacheConfiguration("process-assembly-dashboard-v1",
