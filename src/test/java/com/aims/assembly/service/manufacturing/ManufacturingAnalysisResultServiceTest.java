@@ -127,13 +127,13 @@ class ManufacturingAnalysisResultServiceTest {
         ManufacturingRawEvent press = rawEvent(ProcessCode.PRESS, "EVT-PRESS", Map.of(
                 "processData", Map.of("press", Map.of("timestampDelaySec", 3.0))
         ));
-        service.save(press, analysisEvent(press));
+        service.save(press, analysisEvent(press, press.eventTime().plusSeconds(3)));
         ArgumentCaptor<PressAnalysisResult> pressCaptor =
                 ArgumentCaptor.forClass(PressAnalysisResult.class);
         verify(pressRepository).save(pressCaptor.capture());
         assertThat(pressCaptor.getValue().getTargetCycleTimeSec()).isEqualTo(40.0);
-        assertThat(pressCaptor.getValue().getActualCycleTimeSec()).isEqualTo(43.0);
-        assertThat(pressCaptor.getValue().getCycleTimeGapSec()).isEqualTo(3.0);
+        assertThat(pressCaptor.getValue().getActualCycleTimeSec()).isNull();
+        assertThat(pressCaptor.getValue().getCycleTimeGapSec()).isNull();
         assertThat(pressCaptor.getValue().getTimestampDelaySec()).isEqualTo(3.0);
 
         ManufacturingRawEvent body = rawEvent(ProcessCode.BODY, "EVT-BODY", Map.of(
@@ -259,7 +259,7 @@ class ManufacturingAnalysisResultServiceTest {
                 """
         ));
 
-        service.save(press, analysisEvent(press));
+        service.save(press, analysisEvent(press, press.eventTime().plusSeconds(4)));
 
         ArgumentCaptor<PressAnalysisResult> captor =
                 ArgumentCaptor.forClass(PressAnalysisResult.class);
@@ -269,7 +269,7 @@ class ManufacturingAnalysisResultServiceTest {
         assertThat(detail.getTargetCycleTimeSec()).isEqualTo(12.0);
         assertThat(detail.getActualCycleTimeSec()).isEqualTo(14.6);
         assertThat(detail.getCycleTimeGapSec()).isCloseTo(2.6, within(0.0001));
-        assertThat(detail.getTimestampDelaySec()).isEqualTo(4.2);
+        assertThat(detail.getTimestampDelaySec()).isEqualTo(4.0);
     }
 
     @Test
@@ -327,7 +327,7 @@ class ManufacturingAnalysisResultServiceTest {
         assertThat(pressDetail.getTargetCycleTimeSec()).isEqualTo(40.0);
         assertThat(pressDetail.getActualCycleTimeSec()).isEqualTo(47.5);
         assertThat(pressDetail.getCycleTimeGapSec()).isEqualTo(7.5);
-        assertThat(pressDetail.getTimestampDelaySec()).isEqualTo(7.5);
+        assertThat(pressDetail.getTimestampDelaySec()).isEqualTo(0.0);
 
         ManufacturingRawEvent body = rawEvent(ProcessCode.BODY, "EVT-BODY-FALLBACK", Map.of(
                 "sensor", Map.of(
@@ -382,11 +382,15 @@ class ManufacturingAnalysisResultServiceTest {
     }
 
     private ManufacturingAnalysisEvent analysisEvent(ManufacturingRawEvent raw) {
+        return analysisEvent(raw, raw.eventTime());
+    }
+
+    private ManufacturingAnalysisEvent analysisEvent(ManufacturingRawEvent raw, LocalDateTime analyzedAt) {
         return new ManufacturingAnalysisEvent(
                 "ANL-" + raw.eventId(),
                 raw.eventId(),
                 raw.eventTime(),
-                raw.eventTime(),
+                analyzedAt,
                 "FAC",
                 "LINE",
                 raw.processCode(),

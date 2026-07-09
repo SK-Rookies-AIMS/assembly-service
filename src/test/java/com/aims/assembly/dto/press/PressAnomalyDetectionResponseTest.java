@@ -81,7 +81,7 @@ class PressAnomalyDetectionResponseTest {
     }
 
     @Test
-    void chartsFromBuildsThreeUiSeries() {
+    void chartsFromBuildsTwoUiSeries() {
         ManufacturingAnalysisResult analysis = ManufacturingAnalysisResult.builder()
                 .eventId("EVT-TEST")
                 .analysisId("ANL-TEST")
@@ -104,9 +104,6 @@ class PressAnomalyDetectionResponseTest {
         );
         PressAnomalyDetectionResponse.Charts charts = PressAnomalyDetectionResponse.chartsFrom(List.of(point));
 
-        assertThat(charts.riskScore().points()).hasSize(1);
-        assertThat(charts.riskScore().points().get(0).value()).isEqualTo(72.0);
-        assertThat(charts.riskScore().points().get(0).countIncreaseYn()).isFalse();
         assertThat(charts.cycleTime().points().get(0).targetCycleTimeSec()).isEqualTo(40.0);
         assertThat(charts.cycleTime().points().get(0).actualCycleTimeSec()).isEqualTo(43.0);
         assertThat(charts.delay().points().get(0).cycleTimeGapSec()).isEqualTo(3.0);

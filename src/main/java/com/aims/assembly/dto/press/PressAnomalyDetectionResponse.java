@@ -36,17 +36,8 @@ public record PressAnomalyDetectionResponse(
     }
 
     public record Charts(
-            RiskScoreChart riskScore,
             CycleTimeChart cycleTime,
             DelayChart delay
-    ) {
-    }
-
-    public record RiskScoreChart(
-            String title,
-            String metricKey,
-            String unit,
-            List<RiskScorePoint> points
     ) {
     }
 
@@ -63,17 +54,6 @@ public record PressAnomalyDetectionResponse(
             String metricKey,
             String unit,
             List<DelayPoint> points
-    ) {
-    }
-
-    public record RiskScorePoint(
-            String eventId,
-            String analysisId,
-            LocalDateTime timestamp,
-            Double value,
-            Boolean countIncreaseYn,
-            Boolean isAbnormal,
-            String severity
     ) {
     }
 
@@ -164,20 +144,14 @@ public record PressAnomalyDetectionResponse(
     public static Charts chartsFrom(List<ChartPoint> points) {
         List<ChartPoint> safePoints = points == null ? List.of() : points;
         return new Charts(
-                new RiskScoreChart(
-                        "프레스 위험도",
-                        "riskScore",
-                        "score",
-                        safePoints.stream().map(PressAnomalyDetectionResponse::toRiskScorePoint).toList()
-                ),
                 new CycleTimeChart(
-                        "프레스 사이클 타임",
+                        "press cycle time",
                         "cycleTimeSec",
                         "sec",
                         safePoints.stream().map(PressAnomalyDetectionResponse::toCycleTimePoint).toList()
                 ),
                 new DelayChart(
-                        "프레스 지연/갭",
+                        "press delay/gap",
                         "delaySec",
                         "sec",
                         safePoints.stream().map(PressAnomalyDetectionResponse::toDelayPoint).toList()
@@ -201,18 +175,6 @@ public record PressAnomalyDetectionResponse(
             return Severity.CRITICAL.name();
         }
         return Severity.WARNING.name();
-    }
-
-    private static RiskScorePoint toRiskScorePoint(ChartPoint point) {
-        return new RiskScorePoint(
-                point.eventId(),
-                point.analysisId(),
-                point.timestamp(),
-                point.riskScore(),
-                point.countIncreaseYn(),
-                point.isAbnormal(),
-                point.severity()
-        );
     }
 
     private static CycleTimePoint toCycleTimePoint(ChartPoint point) {

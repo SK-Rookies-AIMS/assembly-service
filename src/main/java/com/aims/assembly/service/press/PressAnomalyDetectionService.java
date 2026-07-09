@@ -32,7 +32,7 @@ public class PressAnomalyDetectionService {
 
     @Cacheable(
             cacheNames = "press-anomaly-dashboard",
-            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
+            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString())"
     )
     public PressAnomalyDetectionResponse findDashboard(
             LocalDate date,
@@ -49,7 +49,6 @@ public class PressAnomalyDetectionService {
             rangeTo = endAt;
         }
 
-        int size = Math.max(1, Math.min(limit, 200));
         List<PressAnomalyDetectionResponse.ChartPoint> allPoints = repository.findDashboardByEventTimeBetween(
                         rangeFrom,
                         rangeTo,
@@ -68,9 +67,7 @@ public class PressAnomalyDetectionService {
                         .thenComparing(PressAnomalyDetectionResponse.ChartPoint::eventId))
                 .toList();
 
-        List<PressAnomalyDetectionResponse.ChartPoint> points = allPoints.size() <= size
-                ? allPoints
-                : allPoints.subList(allPoints.size() - size, allPoints.size());
+        List<PressAnomalyDetectionResponse.ChartPoint> points = allPoints;
 
         PressAnomalyDetectionResponse.ChartPoint latest = points.isEmpty() ? null : points.get(points.size() - 1);
         PressAnomalyDetectionResponse.ChartPoint summaryPoint = points.stream()

@@ -60,7 +60,7 @@ public class BodyAnomalyDetectionService {
 
     @Cacheable(
             cacheNames = "body-anomaly-dashboard",
-            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
+            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString())"
     )
     public BodyAnomalyDetectionResponse findDashboard(
             LocalDate date,
@@ -77,7 +77,6 @@ public class BodyAnomalyDetectionService {
             rangeTo = endAt;
         }
 
-        int size = Math.max(1, Math.min(limit, 200));
         List<BodyAnomalyDetectionResponse.ChartPoint> allPoints = repository.findDashboardByEventTimeBetween(
                         rangeFrom,
                         rangeTo,
@@ -95,9 +94,7 @@ public class BodyAnomalyDetectionService {
                 .sorted(Comparator.comparing(BodyAnomalyDetectionResponse.ChartPoint::timestamp))
                 .toList();
 
-        List<BodyAnomalyDetectionResponse.ChartPoint> points = allPoints.size() <= size
-                ? allPoints
-                : allPoints.subList(allPoints.size() - size, allPoints.size());
+        List<BodyAnomalyDetectionResponse.ChartPoint> points = allPoints;
 
         boolean detected = points.stream().anyMatch(this::isBodyAnomaly);
         LocalDateTime previousEndAt = points.isEmpty() ? null : points.get(0).timestamp().minusNanos(1);
