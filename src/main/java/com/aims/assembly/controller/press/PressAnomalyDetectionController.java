@@ -52,7 +52,7 @@ public class PressAnomalyDetectionController {
     ) {
         return ApiResponse.success(
                 service.findDashboard(date, from, to, endAt, limit),
-                "Press anomaly detection dashboard"
+                "프레스 이상 탐지 API 조회 성공"
         );
     }
 }

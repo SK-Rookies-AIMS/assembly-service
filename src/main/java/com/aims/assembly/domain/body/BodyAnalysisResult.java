@@ -1,10 +1,9 @@
 package com.aims.assembly.domain.body;
 
 import com.aims.assembly.domain.analysis.ManufacturingAnalysisResult;
+import com.aims.assembly.domain.commons.BaseEntity;
 import jakarta.persistence.*;
 import lombok.*;
-
-import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "body_analysis_result")
@@ -12,7 +11,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
-public class BodyAnalysisResult {
+public class BodyAnalysisResult extends BaseEntity {
 
     @Id
     @Column(name = "analysis_result_id")

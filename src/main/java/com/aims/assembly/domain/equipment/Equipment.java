@@ -1,5 +1,6 @@
 package com.aims.assembly.domain.equipment;
 
+import com.aims.assembly.domain.commons.BaseEntity;
 import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.domain.enums.EquipmentType;
 import com.aims.assembly.domain.enums.ProcessCode;
@@ -12,8 +13,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -23,7 +22,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
-public class Equipment {
+public class Equipment extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -55,14 +54,6 @@ public class Equipment {
 
     @Column(name = "reason", length = 255)
     private String reason;
-
-    @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
-    private LocalDateTime createdAt;
-
-    @UpdateTimestamp
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
 
     public void applyStatus(
             EquipmentOperationStatus operationStatus,

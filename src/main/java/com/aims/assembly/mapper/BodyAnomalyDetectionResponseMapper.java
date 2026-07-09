@@ -1,17 +1,15 @@
 package com.aims.assembly.mapper;
 
-import com.aims.assembly.domain.body.BodyAnalysisResult;
 import com.aims.assembly.dto.body.BodyAnomalyDetectionResponse;
+import lombok.experimental.UtilityClass;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+@UtilityClass
 public final class BodyAnomalyDetectionResponseMapper {
-
-    private BodyAnomalyDetectionResponseMapper() {
-    }
 
     public static BodyAnomalyDetectionResponse toResponse(
             LocalDate date,
@@ -20,12 +18,13 @@ public final class BodyAnomalyDetectionResponseMapper {
             LocalDateTime previousEndAt,
             List<BodyAnomalyDetectionResponse.DateOption> dateOptions,
             BodyAnomalyDetectionResponse.Metrics metrics,
-            List<BodyAnomalyDetectionResponse.ChartPoint> chart,
+            BodyAnomalyDetectionResponse.Charts charts,
             List<BodyAnomalyDetectionResponse.FrequencyBandPoint> frequencyChart,
+            List<BodyAnomalyDetectionResponse.FrequencyZonePoint> frequencyZoneChart,
             BodyAnomalyDetectionResponse.FrequencyZoneAnalysis frequencyZoneAnalysis,
             BodyAnomalyDetectionResponse.AlertPanel alert
     ) {
-        return new BodyAnomalyDetectionResponse(date, from, to, previousEndAt, dateOptions, metrics, chart, frequencyChart, frequencyZoneAnalysis, alert);
+        return new BodyAnomalyDetectionResponse(date, from, to, previousEndAt, dateOptions, metrics, charts, frequencyChart, frequencyZoneChart, frequencyZoneAnalysis, alert);
     }
 
     public static BodyAnomalyDetectionResponse.DateOption toDateOption(
@@ -39,10 +38,13 @@ public final class BodyAnomalyDetectionResponseMapper {
             String eventId,
             String analysisId,
             LocalDateTime timestamp,
-            Double targetVibrationScore,
-            Double vibrationScore,
-            Double targetVibrationPeak,
+            Double robotVibrationScore,
+            Double frequencyPeakValue,
             Double vibrationPeak,
+            Double vibrationWarningLine,
+            Double vibrationDangerLine,
+            Double peakWarningLine,
+            Double peakDangerLine,
             Double vibrationRms,
             Double riskScore,
             Boolean isAbnormal,
@@ -52,10 +54,13 @@ public final class BodyAnomalyDetectionResponseMapper {
                 eventId,
                 analysisId,
                 timestamp,
-                targetVibrationScore,
-                vibrationScore,
-                targetVibrationPeak,
+                robotVibrationScore,
+                frequencyPeakValue,
                 vibrationPeak,
+                vibrationWarningLine,
+                vibrationDangerLine,
+                peakWarningLine,
+                peakDangerLine,
                 vibrationRms,
                 riskScore,
                 isAbnormal,
@@ -63,16 +68,89 @@ public final class BodyAnomalyDetectionResponseMapper {
         );
     }
 
+    public static BodyAnomalyDetectionResponse.RobotMetricPoint toRobotMetricPoint(
+            String eventId,
+            String analysisId,
+            LocalDateTime timestamp,
+            Double value,
+            Double warningLine,
+            Double dangerLine,
+            Boolean isAbnormal,
+            String severity
+    ) {
+        return new BodyAnomalyDetectionResponse.RobotMetricPoint(
+                eventId,
+                analysisId,
+                timestamp,
+                value,
+                warningLine,
+                dangerLine,
+                isAbnormal,
+                severity
+        );
+    }
+
+    public static BodyAnomalyDetectionResponse.PeakMetricPoint toPeakMetricPoint(
+            String eventId,
+            String analysisId,
+            LocalDateTime timestamp,
+            Double value,
+            Double secondaryValue,
+            Double warningLine,
+            Double dangerLine,
+            Boolean isAbnormal,
+            String severity
+    ) {
+        return new BodyAnomalyDetectionResponse.PeakMetricPoint(
+                eventId,
+                analysisId,
+                timestamp,
+                value,
+                secondaryValue,
+                warningLine,
+                dangerLine,
+                isAbnormal,
+                severity
+        );
+    }
+
+    public static BodyAnomalyDetectionResponse.RobotMetricChart toRobotMetricChart(
+            String title,
+            String metricKey,
+            String unit,
+            List<BodyAnomalyDetectionResponse.RobotMetricPoint> points
+    ) {
+        return new BodyAnomalyDetectionResponse.RobotMetricChart(title, metricKey, unit, points);
+    }
+
+    public static BodyAnomalyDetectionResponse.PeakMetricChart toPeakMetricChart(
+            String title,
+            String metricKey,
+            String unit,
+            List<BodyAnomalyDetectionResponse.PeakMetricPoint> points
+    ) {
+        return new BodyAnomalyDetectionResponse.PeakMetricChart(title, metricKey, unit, points);
+    }
+
+    public static BodyAnomalyDetectionResponse.Charts toCharts(
+            BodyAnomalyDetectionResponse.RobotMetricChart robotVibration,
+            BodyAnomalyDetectionResponse.PeakMetricChart frequencyPeak
+    ) {
+        return new BodyAnomalyDetectionResponse.Charts(robotVibration, frequencyPeak);
+    }
+
     public static BodyAnomalyDetectionResponse.Metrics toMetrics(
             String robotMotionStatus,
             String robotOperationMode,
-            Double targetVibrationScore,
-            Double vibrationScore,
-            Double targetVibrationPeak,
+            Double robotVibrationScore,
             Double vibrationPeak,
             Double vibrationRms,
             String frequencyPeakBand,
             Double frequencyPeakValue,
+            Double vibrationWarningLine,
+            Double vibrationDangerLine,
+            Double peakWarningLine,
+            Double peakDangerLine,
             Double riskScore,
             String riskScoreScale,
             String severity,
@@ -81,17 +159,59 @@ public final class BodyAnomalyDetectionResponseMapper {
         return new BodyAnomalyDetectionResponse.Metrics(
                 robotMotionStatus,
                 robotOperationMode,
-                targetVibrationScore,
-                vibrationScore,
-                targetVibrationPeak,
+                robotVibrationScore,
                 vibrationPeak,
                 vibrationRms,
                 frequencyPeakBand,
                 frequencyPeakValue,
+                vibrationWarningLine,
+                vibrationDangerLine,
+                peakWarningLine,
+                peakDangerLine,
                 riskScore,
                 riskScoreScale,
                 severity,
                 frequencyBands
+        );
+    }
+
+    public static BodyAnomalyDetectionResponse.FrequencyBandPoint toFrequencyBandPoint(
+            LocalDateTime timestamp,
+            String band,
+            Double value,
+            Double targetValue,
+            Double warningValue,
+            Double dangerValue
+    ) {
+        return new BodyAnomalyDetectionResponse.FrequencyBandPoint(
+                timestamp,
+                band,
+                value,
+                targetValue,
+                warningValue,
+                dangerValue
+        );
+    }
+
+    public static BodyAnomalyDetectionResponse.FrequencyZonePoint toFrequencyZonePoint(
+            String zone,
+            String range,
+            String description,
+            Double avg,
+            Double max,
+            Double targetValue,
+            Double warningValue,
+            Double dangerValue
+    ) {
+        return new BodyAnomalyDetectionResponse.FrequencyZonePoint(
+                zone,
+                range,
+                description,
+                avg,
+                max,
+                targetValue,
+                warningValue,
+                dangerValue
         );
     }
 
