@@ -164,7 +164,7 @@ public class PressAnomalyDetectionService {
             PressAnomalyDetectionResponse.ChartPoint summaryPoint
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return PressAnomalyDetectionResponseMapper.toAlert(false, "press anomaly not detected", List.of());
+            return PressAnomalyDetectionResponseMapper.toAlert(false, "프레스 이상 탐지 미검출", List.of());
         }
 
         int countIncreaseFail = 0;
@@ -191,19 +191,19 @@ public class PressAnomalyDetectionService {
 
         List<String> reasons = new ArrayList<>();
         if (countIncreaseFail > 0) {
-            reasons.add("countIncreaseYn failure: " + countIncreaseFail + " cases");
+            reasons.add("생산 수 증가 미충족: " + countIncreaseFail + "건");
         }
         if (cycleTimeExceeded > 0) {
-            reasons.add("cycle time exceeded: " + cycleTimeExceeded + " cases, max +" + formatSec(maxCycleTimeGap) + " sec");
+            reasons.add("사이클 지연 초과: " + cycleTimeExceeded + "건, 최대 +" + formatSec(maxCycleTimeGap) + " sec");
         }
         if (abnormalCount > 0) {
-            reasons.add("abnormal points: " + abnormalCount + " cases");
+            reasons.add("이상 감지: " + abnormalCount + "건");
         }
         if (summaryPoint != null) {
-            reasons.add("summary event: " + summaryPoint.eventId());
+            reasons.add("대표 이상 이벤트: " + summaryPoint.eventId());
         }
 
-        return PressAnomalyDetectionResponseMapper.toAlert(true, "press anomaly warning", List.copyOf(reasons));
+        return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 탐지 경고", List.copyOf(reasons));
     }
 
     private boolean isPressAnomaly(PressAnomalyDetectionResponse.ChartPoint point) {
