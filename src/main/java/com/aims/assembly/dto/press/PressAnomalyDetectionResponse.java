@@ -28,7 +28,6 @@ public record PressAnomalyDetectionResponse(
             Double targetCycleTimeSec,
             Double actualCycleTimeSec,
             Double cycleTimeGapSec,
-            Double timestampDelaySec,
             Double riskScore,
             String riskScoreScale,
             String severity
@@ -74,7 +73,6 @@ public record PressAnomalyDetectionResponse(
             String analysisId,
             LocalDateTime timestamp,
             Double cycleTimeGapSec,
-            Double timestampDelaySec,
             Boolean countIncreaseYn,
             Boolean isAbnormal,
             String severity
@@ -88,7 +86,6 @@ public record PressAnomalyDetectionResponse(
             Double targetCycleTimeSec,
             Double actualCycleTimeSec,
             Double cycleTimeGapSec,
-            Double timestampDelaySec,
             Double riskScore,
             Boolean countIncreaseYn,
             Boolean isAbnormal,
@@ -110,7 +107,6 @@ public record PressAnomalyDetectionResponse(
                     result.getTargetCycleTimeSec(),
                     result.getActualCycleTimeSec(),
                     result.getCycleTimeGapSec(),
-                    result.getTimestampDelaySec(),
                     score,
                     result.getCountIncreaseYn(),
                     isAbnormal,
@@ -128,13 +124,12 @@ public record PressAnomalyDetectionResponse(
 
     public static Metrics metricsFrom(ChartPoint point) {
         if (point == null) {
-            return new Metrics(null, null, null, null, null, "0-100", Severity.NORMAL.name());
+            return new Metrics(null, null, null, null, "0-100", Severity.NORMAL.name());
         }
         return new Metrics(
                 point.targetCycleTimeSec(),
                 point.actualCycleTimeSec(),
                 point.cycleTimeGapSec(),
-                point.timestampDelaySec(),
                 point.riskScore(),
                 "0-100",
                 point.severity() == null ? Severity.NORMAL.name() : point.severity()
@@ -196,7 +191,6 @@ public record PressAnomalyDetectionResponse(
                 point.analysisId(),
                 point.timestamp(),
                 point.cycleTimeGapSec(),
-                point.timestampDelaySec(),
                 point.countIncreaseYn(),
                 point.isAbnormal(),
                 point.severity()
