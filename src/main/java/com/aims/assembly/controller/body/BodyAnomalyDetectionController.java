@@ -52,7 +52,7 @@ public class BodyAnomalyDetectionController {
     ) {
         return ApiResponse.success(
                 service.findDashboard(date, from, to, endAt, limit),
-                "Body anomaly detection dashboard"
+                "차체 이상 탐지 API 조회 성공"
         );
     }
 }

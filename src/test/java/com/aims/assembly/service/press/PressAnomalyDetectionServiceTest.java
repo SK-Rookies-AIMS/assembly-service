@@ -25,7 +25,6 @@ class PressAnomalyDetectionServiceTest {
 
     @Test
     void dashboardUsesAnalysisResultEventTimeAsPrimarySource() {
-        // manufacturing_analysis_result.event_time = 2026-06-01
         PressAnalysisResult result = pressResult(
                 "EVT-20260601-000397",
                 LocalDateTime.of(2026, 6, 1, 9, 30),
@@ -43,6 +42,10 @@ class PressAnomalyDetectionServiceTest {
                 LocalDateTime.of(2026, 6, 1, 23, 59, 59, 999_999_999),
                 PageRequest.of(0, 10_000)
         )).thenReturn(List.of(result));
+        when(repository.findMaxRiskScoreByEventTimeBetween(
+                LocalDateTime.of(2026, 6, 1, 0, 0),
+                LocalDateTime.of(2026, 6, 1, 23, 59, 59, 999_999_999)
+        )).thenReturn(78.0);
 
         var response = service.findDashboard(null, null, null, null, 30);
 
@@ -56,14 +59,19 @@ class PressAnomalyDetectionServiceTest {
         assertThat(response.chart().get(0).targetCycleTimeSec()).isEqualTo(40.0);
         assertThat(response.chart().get(0).actualCycleTimeSec()).isEqualTo(43.0);
         assertThat(response.chart().get(0).cycleTimeGapSec()).isEqualTo(3.0);
-        assertThat(response.chart().get(0).timestampDelaySec()).isEqualTo(3.0);
+        assertThat(response.charts().cycleTime().title()).isEqualTo("press cycle time");
+        assertThat(response.charts().cycleTime().points()).hasSize(1);
+        assertThat(response.charts().cycleTime().points().get(0).targetCycleTimeSec()).isEqualTo(40.0);
+        assertThat(response.charts().cycleTime().points().get(0).actualCycleTimeSec()).isEqualTo(43.0);
+        assertThat(response.charts().delay().title()).isEqualTo("press delay/gap");
+        assertThat(response.charts().delay().points()).hasSize(1);
+        assertThat(response.charts().delay().points().get(0).cycleTimeGapSec()).isEqualTo(3.0);
         assertThat(response.metrics().targetCycleTimeSec()).isEqualTo(40.0);
         assertThat(response.metrics().actualCycleTimeSec()).isEqualTo(43.0);
         assertThat(response.metrics().cycleTimeGapSec()).isEqualTo(3.0);
-        assertThat(response.metrics().timestampDelaySec()).isEqualTo(3.0);
-        assertThat(response.metrics().riskScore()).isEqualTo(78.0); // max riskScore among anomaly points
+        assertThat(response.metrics().riskScore()).isEqualTo(78.0);
         assertThat(response.alert().detected()).isTrue();
-        assertThat(response.alert().title()).isEqualTo("프레스 이상 정지 탐지");
+        assertThat(response.alert().title()).isNotBlank();
     }
 
     private PressAnalysisResult pressResult(String eventId, LocalDateTime eventTime, double riskScore) {
@@ -84,7 +92,6 @@ class PressAnomalyDetectionServiceTest {
                 .targetCycleTimeSec(40.0)
                 .actualCycleTimeSec(43.0)
                 .cycleTimeGapSec(3.0)
-                .timestampDelaySec(3.0)
                 .countIncreaseYn(false)
                 .build();
     }

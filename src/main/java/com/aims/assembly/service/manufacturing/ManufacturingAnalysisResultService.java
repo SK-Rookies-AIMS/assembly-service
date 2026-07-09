@@ -50,8 +50,8 @@ public class ManufacturingAnalysisResultService {
      */
     @Transactional
     @CacheEvict(cacheNames = {
-            "press-anomaly-dashboard-v2",
-            "body-anomaly-dashboard-v2",
+            "press-anomaly-dashboard",
+            "body-anomaly-dashboard",
             "paint-anomaly-dashboard-v2",
             "process-paint-dashboard-v1",
             "process-assembly-dashboard-v1",
@@ -173,21 +173,6 @@ public class ManufacturingAnalysisResultService {
                     targetCycleTime = DEFAULT_PRESS_TARGET_CYCLE_TIME_SEC;
                 }
 
-                Double timestampDelaySec = firstDouble(
-                        json,
-                        new String[]{"processData", "press", "timestampDelaySec"},
-                        new String[]{"processMetrics", "stationDelaySec"}
-                );
-                if (timestampDelaySec == null || timestampDelaySec < 0) {
-                    timestampDelaySec = doubleVal(usedFields, "timestampDelaySec");
-                }
-                if (timestampDelaySec == null || timestampDelaySec < 0) {
-                    timestampDelaySec = doubleVal(usedFields, "stationDelaySec");
-                }
-                if (timestampDelaySec == null || timestampDelaySec < 0) {
-                    timestampDelaySec = 0.0;
-                }
-
                 Double actualCycleTime = firstDouble(
                         json,
                         new String[]{"processMetrics", "cycleTimeSec"},
@@ -200,6 +185,9 @@ public class ManufacturingAnalysisResultService {
                 if (actualCycleTime == null || actualCycleTime <= 0) {
                     actualCycleTime = doubleVal(usedFields, "cycleTimeSec");
                 }
+                if (actualCycleTime != null && actualCycleTime <= 0) {
+                    actualCycleTime = null;
+                }
 
                 /*
                  * [FIX]
@@ -210,20 +198,15 @@ public class ManufacturingAnalysisResultService {
                  * 이상 탐지인데 실제값이 target과 같으면 eventId 기반 deterministic 보정값을 부여한다.
                  */
                 boolean pressAbnormal = Boolean.TRUE.equals(savedResult.getIsAbnormal());
-
-                if (pressAbnormal && timestampDelaySec <= 0) {
-                    timestampDelaySec = calculatePressDelaySec(savedResult);
+                Double timestampDelaySec = calculatePressTimestampDelaySec(savedResult);
+                if (timestampDelaySec == null || timestampDelaySec < 0) {
+                    timestampDelaySec = 0.0;
                 }
 
-                if (actualCycleTime == null || actualCycleTime <= 0) {
-                    actualCycleTime = targetCycleTime + timestampDelaySec;
+                Double cycleTimeGapSec = null;
+                if (actualCycleTime != null && targetCycleTime != null) {
+                    cycleTimeGapSec = actualCycleTime - targetCycleTime;
                 }
-
-                if (pressAbnormal && actualCycleTime <= targetCycleTime) {
-                    actualCycleTime = targetCycleTime + timestampDelaySec;
-                }
-
-                double cycleTimeGapSec = actualCycleTime - targetCycleTime;
 
                 log.info("[DETAIL_SAVE][PRESS] resultId={}, eventId={}, abnormal={}, riskScore={}, countIncreaseYn={}, timestampDelaySec={}, targetCycleTime={}, actualCycleTime={}, cycleTimeGap={}",
                         savedResult.getId(),
@@ -728,6 +711,19 @@ public class ManufacturingAnalysisResultService {
 
         double variation = eventIdVariation(savedResult.getEventId(), 0.0, 2.9);
         return round3(baseDelay + variation);
+    }
+
+    private Double calculatePressTimestampDelaySec(ManufacturingAnalysisResult savedResult) {
+        if (savedResult == null) {
+            return null;
+        }
+        LocalDateTime eventTime = savedResult.getEventTime();
+        LocalDateTime analyzedAt = savedResult.getAnalyzedAt();
+        if (eventTime == null || analyzedAt == null) {
+            return null;
+        }
+        double seconds = java.time.Duration.between(eventTime, analyzedAt).toMillis() / 1000.0;
+        return round3(Math.max(0.0, seconds));
     }
 
     private double eventIdVariation(String eventId, double min, double max) {

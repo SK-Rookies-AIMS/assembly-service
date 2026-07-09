@@ -12,17 +12,12 @@ public record BodyAnomalyDetectionResponse(
         LocalDateTime previousEndAt,
         List<DateOption> dateOptions,
         Metrics metrics,
-        List<ChartPoint> chart,
+        Charts charts,
         List<FrequencyBandPoint> frequencyChart,
+        List<FrequencyZonePoint> frequencyZoneChart,
         FrequencyZoneAnalysis frequencyZoneAnalysis,
         AlertPanel alert
 ) {
-    public record FrequencyBandPoint(
-            LocalDateTime timestamp,
-            String band, 
-            Double value,
-            Double targetValue
-    ) {}
     public record DateOption(
             LocalDate date,
             String sampleEventId
@@ -32,13 +27,15 @@ public record BodyAnomalyDetectionResponse(
     public record Metrics(
             String robotMotionStatus,
             String robotOperationMode,
-            Double targetVibrationScore,
-            Double vibrationScore,
-            Double targetVibrationPeak,
-            Double vibrationPeak,
-            Double vibrationRms,
+            Double avgRobotVibrationScore,
+            Double avgVibrationPeak,
+            Double avgVibrationRms,
             String frequencyPeakBand,
-            Double frequencyPeakValue,
+            Double avgFrequencyPeakValue,
+            Double vibrationWarningLine,
+            Double vibrationDangerLine,
+            Double peakWarningLine,
+            Double peakDangerLine,
             Double riskScore,
             String riskScoreScale,
             String severity,
@@ -46,18 +43,90 @@ public record BodyAnomalyDetectionResponse(
     ) {
     }
 
+    public record Charts(
+            RobotMetricChart robotVibration,
+            PeakMetricChart frequencyPeak
+    ) {
+    }
+
+    public record RobotMetricChart(
+            String title,
+            String metricKey,
+            String unit,
+            List<RobotMetricPoint> points
+    ) {
+    }
+
+    public record PeakMetricChart(
+            String title,
+            String metricKey,
+            String unit,
+            List<PeakMetricPoint> points
+    ) {
+    }
+
+    public record RobotMetricPoint(
+            String eventId,
+            String analysisId,
+            LocalDateTime timestamp,
+            Double value,
+            Double warningLine,
+            Double dangerLine,
+            Boolean isAbnormal,
+            String severity
+    ) {
+    }
+
+    public record PeakMetricPoint(
+            String eventId,
+            String analysisId,
+            LocalDateTime timestamp,
+            Double value,
+            Double secondaryValue,
+            Double warningLine,
+            Double dangerLine,
+            Boolean isAbnormal,
+            String severity
+    ) {
+    }
+
     public record ChartPoint(
             String eventId,
             String analysisId,
             LocalDateTime timestamp,
-            Double targetVibrationScore,
-            Double vibrationScore,
-            Double targetVibrationPeak,
+            Double robotVibrationScore,
+            Double frequencyPeakValue,
             Double vibrationPeak,
+            Double vibrationWarningLine,
+            Double vibrationDangerLine,
+            Double peakWarningLine,
+            Double peakDangerLine,
             Double vibrationRms,
             Double riskScore,
             Boolean isAbnormal,
             String severity
+    ) {
+    }
+
+    public record FrequencyBandPoint(
+            LocalDateTime timestamp,
+            String band,
+            Double value,
+            Double targetValue,
+            Double warningValue,
+            Double dangerValue
+    ) {
+    }
+
+    public record FrequencyZonePoint(
+            String zone,
+            String range,
+            String description,
+            Double avg,
+            Double max,
+            Double targetValue,
+            Double warningValue,
+            Double dangerValue
     ) {
     }
 
@@ -70,7 +139,8 @@ public record BodyAnomalyDetectionResponse(
         public record ZoneStats(
                 Double avg,
                 Double max
-        ) {}
+        ) {
+        }
     }
 
     public record AlertPanel(

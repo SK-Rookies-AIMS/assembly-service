@@ -31,8 +31,8 @@ public class PressAnomalyDetectionService {
     private final ManufacturingEventJsonRepository eventRepository;
 
     @Cacheable(
-            cacheNames = "press-anomaly-dashboard-v2",
-            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString()) + ':' + (#limit ?: 30)"
+            cacheNames = "press-anomaly-dashboard",
+            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString())"
     )
     public PressAnomalyDetectionResponse findDashboard(
             LocalDate date,
@@ -49,8 +49,7 @@ public class PressAnomalyDetectionService {
             rangeTo = endAt;
         }
 
-        int size = Math.max(1, Math.min(limit, 200));
-        List<PressAnomalyDetectionResponse.ChartPoint> allPoints = repository.findDashboardByEventTimeBetween(
+        List<PressAnomalyDetectionResponse.ChartPoint> points = repository.findDashboardByEventTimeBetween(
                         rangeFrom,
                         rangeTo,
                         PageRequest.of(0, MAX_EVENT_LOOKUP_SIZE)
@@ -68,10 +67,6 @@ public class PressAnomalyDetectionService {
                         .thenComparing(PressAnomalyDetectionResponse.ChartPoint::eventId))
                 .toList();
 
-        List<PressAnomalyDetectionResponse.ChartPoint> points = allPoints.size() <= size
-                ? allPoints
-                : allPoints.subList(allPoints.size() - size, allPoints.size());
-
         PressAnomalyDetectionResponse.ChartPoint latest = points.isEmpty() ? null : points.get(points.size() - 1);
         PressAnomalyDetectionResponse.ChartPoint summaryPoint = points.stream()
                 .filter(this::isPressAnomaly)
@@ -84,6 +79,7 @@ public class PressAnomalyDetectionService {
 
         Double dbMaxRiskScore = repository.findMaxRiskScoreByEventTimeBetween(rangeFrom, rangeTo);
         double maxRiskScore = dbMaxRiskScore != null ? dbMaxRiskScore : 0.0;
+        PressAnomalyDetectionResponse.Charts charts = PressAnomalyDetectionResponseMapper.toCharts(points);
 
         PressAnomalyDetectionResponse response = PressAnomalyDetectionResponseMapper.toResponse(
                 targetDate,
@@ -92,17 +88,12 @@ public class PressAnomalyDetectionService {
                 previousEndAt,
                 dateOptions,
                 toMetrics(summaryPoint, detected, maxRiskScore),
+                charts,
                 points,
                 toAlert(points, detected, summaryPoint)
         );
-        log.info(
-                "프레스 이상 탐지 대시보드 조회 완료: date={}, from={}, to={}, 건수={}, 탐지여부={}",
-                targetDate,
-                rangeFrom,
-                rangeTo,
-                points.size(),
-                detected
-        );
+        log.info("press anomaly dashboard loaded: date={}, from={}, to={}, count={}, detected={}",
+                targetDate, rangeFrom, rangeTo, points.size(), detected);
         return response;
     }
 
@@ -130,7 +121,6 @@ public class PressAnomalyDetectionService {
     }
 
     private PressAnomalyDetectionResponse.ChartPoint toChartPoint(PressAnalysisResult result) {
-        var analysis = result.getAnalysisResult();
         return PressAnomalyDetectionResponseMapper.toChartPoint(result);
     }
 
@@ -143,14 +133,16 @@ public class PressAnomalyDetectionService {
             return PressAnomalyDetectionResponseMapper.toMetrics(
                     new PressAnomalyDetectionResponse.ChartPoint(
                             null, null, null,
-                            0.0, 0.0, 0.0, 0.0,
-                            maxRiskScore, null, null,
+                            0.0, 0.0, 0.0,
+                            maxRiskScore,
+                            null, null,
                             detected ? "WARNING" : "NORMAL"
                     )
             );
         }
-        // Use the DB maxRiskScore instead of the single point's score
-        String computedSeverity = maxRiskScore >= 80.0 ? "CRITICAL" : (maxRiskScore >= 60.0 ? "WARNING" : point.severity());
+        String computedSeverity = maxRiskScore >= 80.0
+                ? "CRITICAL"
+                : (maxRiskScore >= 60.0 ? "WARNING" : point.severity());
         PressAnomalyDetectionResponse.ChartPoint updatedPoint = new PressAnomalyDetectionResponse.ChartPoint(
                 point.eventId(),
                 point.analysisId(),
@@ -158,7 +150,6 @@ public class PressAnomalyDetectionService {
                 point.targetCycleTimeSec(),
                 point.actualCycleTimeSec(),
                 point.cycleTimeGapSec(),
-                point.timestampDelaySec(),
                 maxRiskScore,
                 point.countIncreaseYn(),
                 point.isAbnormal(),
@@ -173,15 +164,13 @@ public class PressAnomalyDetectionService {
             PressAnomalyDetectionResponse.ChartPoint summaryPoint
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return PressAnomalyDetectionResponseMapper.toAlert(false, "프레스 이상 정지 미탐지", List.of());
+            return PressAnomalyDetectionResponseMapper.toAlert(false, "프레스 이상 탐지 미검출", List.of());
         }
 
         int countIncreaseFail = 0;
         int cycleTimeExceeded = 0;
-        int timestampDelayCount = 0;
         int abnormalCount = 0;
         double maxCycleTimeGap = 0.0;
-        double maxTimestampDelay = 0.0;
 
         for (PressAnomalyDetectionResponse.ChartPoint point : points) {
             if (!isPressAnomaly(point)) {
@@ -195,10 +184,6 @@ public class PressAnomalyDetectionService {
                 cycleTimeExceeded++;
                 maxCycleTimeGap = Math.max(maxCycleTimeGap, point.actualCycleTimeSec() - point.targetCycleTimeSec());
             }
-            if (point.timestampDelaySec() != null && point.timestampDelaySec() > 0) {
-                timestampDelayCount++;
-                maxTimestampDelay = Math.max(maxTimestampDelay, point.timestampDelaySec());
-            }
             if (Boolean.TRUE.equals(point.isAbnormal())) {
                 abnormalCount++;
             }
@@ -206,22 +191,19 @@ public class PressAnomalyDetectionService {
 
         List<String> reasons = new ArrayList<>();
         if (countIncreaseFail > 0) {
-            reasons.add("생산 카운트 증가 실패: " + countIncreaseFail + "건");
+            reasons.add("생산 수 증가 미충족: " + countIncreaseFail + "건");
         }
         if (cycleTimeExceeded > 0) {
-            reasons.add("실제 사이클 타임 초과: " + cycleTimeExceeded + "건, 최대 +" + formatSec(maxCycleTimeGap) + " sec");
-        }
-        if (timestampDelayCount > 0) {
-            reasons.add("Timestamp 지연: " + timestampDelayCount + "건, 최대 " + formatSec(maxTimestampDelay) + " sec");
+            reasons.add("사이클 지연 초과: " + cycleTimeExceeded + "건, 최대 +" + formatSec(maxCycleTimeGap) + " sec");
         }
         if (abnormalCount > 0) {
-            reasons.add("이상 징후 감지: " + abnormalCount + "건");
+            reasons.add("이상 감지: " + abnormalCount + "건");
         }
         if (summaryPoint != null) {
             reasons.add("대표 이상 이벤트: " + summaryPoint.eventId());
         }
 
-        return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 정지 탐지", List.copyOf(reasons));
+        return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 탐지 경고", List.copyOf(reasons));
     }
 
     private boolean isPressAnomaly(PressAnomalyDetectionResponse.ChartPoint point) {
@@ -229,7 +211,6 @@ public class PressAnomalyDetectionService {
                 && (Boolean.FALSE.equals(point.countIncreaseYn())
                 || (point.targetCycleTimeSec() != null && point.actualCycleTimeSec() != null
                 && point.actualCycleTimeSec() > point.targetCycleTimeSec())
-                || (point.timestampDelaySec() != null && point.timestampDelaySec() > 0)
                 || Boolean.TRUE.equals(point.isAbnormal()));
     }
 
@@ -245,9 +226,6 @@ public class PressAnomalyDetectionService {
                 && point.actualCycleTimeSec() > point.targetCycleTimeSec()) {
             weight += (point.actualCycleTimeSec() - point.targetCycleTimeSec()) * 10.0;
         }
-        if (point.timestampDelaySec() != null && point.timestampDelaySec() > 0) {
-            weight += point.timestampDelaySec() * 8.0;
-        }
         if (Boolean.TRUE.equals(point.isAbnormal())) {
             weight += 50.0;
         }
@@ -256,10 +234,6 @@ public class PressAnomalyDetectionService {
 
     private String formatSec(Double value) {
         return String.format(java.util.Locale.ROOT, "%.1f", value == null ? 0.0 : value);
-    }
-
-    private Double safeNumber(Double value) {
-        return value == null ? 0.0 : value;
     }
 
     private boolean isLater(
@@ -288,5 +262,4 @@ public class PressAnomalyDetectionService {
         }
         return leftId >= rightId;
     }
-
 }
