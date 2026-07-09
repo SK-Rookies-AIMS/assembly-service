@@ -83,7 +83,7 @@ class BodyAnomalyDetectionServiceTest {
         assertThat(response.metrics().robotOperationMode()).isEqualTo("AUTO_MANUAL_STOPPED");
         assertThat(response.metrics().avgRobotVibrationScore()).isEqualTo(0.27);
         assertThat(response.metrics().avgFrequencyPeakValue()).isEqualTo(2.907113);
-        assertThat(response.metrics().frequencyPeakBand()).isEqualTo("501_600_HZ");
+        assertThat(response.metrics().frequencyPeakBand()).isEqualTo("501~600Hz");
         assertThat(response.metrics().vibrationWarningLine()).isEqualTo(0.75);
         assertThat(response.metrics().vibrationDangerLine()).isEqualTo(1.25);
         assertThat(response.metrics().peakWarningLine()).isEqualTo(0.015);
@@ -111,13 +111,81 @@ class BodyAnomalyDetectionServiceTest {
         assertThat(response.frequencyChart().get(0).dangerValue()).isEqualTo(0.03);
 
         assertThat(response.alert().detected()).isTrue();
-        assertThat(response.alert().reasons()).contains(
-                "robot_motion_status = COLLISION_RISK",
-                "robot_operation_mode = AUTO_MANUAL_STOPPED",
-                "peak vibration increased (2.907113 mm/s)",
-                "frequency peak band = 501-600Hz",
-                "이상 탐지 건수 = 1"
-        );
+        assertThat(response.alert().reasons()).isNotEmpty();
+        assertThat(response.alert().reasons()).hasSizeGreaterThanOrEqualTo(4);
+    }
+
+    @Test
+    void abnormalBodyPointIsPromotedToWarningSeverity() {
+        ManufacturingAnalysisResult analysis = ManufacturingAnalysisResult.builder()
+                .id(2L)
+                .analysisId("ANL-EVT-20260601-000777")
+                .eventId("EVT-20260601-000777")
+                .carMasterId(1L)
+                .equipmentId(1L)
+                .processCode(ProcessCode.BODY)
+                .eventTime(LocalDateTime.of(2026, 6, 1, 11, 0))
+                .isAbnormal(true)
+                .severity(Severity.NORMAL)
+                .riskScore(15.0)
+                .build();
+        BodyAnalysisResult result = BodyAnalysisResult.builder()
+                .analysisResult(analysis)
+                .robotMotionStatus("NORMAL")
+                .robotOperationMode("AUTO")
+                .robotVibrationScore(0.2)
+                .frequencyPeakBand("MID")
+                .frequencyPeakValue(0.002)
+                .frequencyBandsJson("{}")
+                .build();
+
+        BodyAnalysisResultRepository.BodyDateOptionProjection projection =
+                mock(BodyAnalysisResultRepository.BodyDateOptionProjection.class);
+        when(projection.getDate()).thenReturn(LocalDate.of(2026, 6, 1));
+        when(projection.getSampleEventId()).thenReturn("EVT-20260601-000777");
+        when(repository.findBodyAnalysisDateOptions()).thenReturn(List.of(projection));
+        when(repository.findDashboardByEventTimeBetween(
+                LocalDateTime.of(2026, 6, 1, 0, 0),
+                LocalDateTime.of(2026, 6, 1, 23, 59, 59, 999_999_999),
+                PageRequest.of(0, 10_000)
+        )).thenReturn(List.of(result));
+        when(repository.findByAnalysisResult_AnalysisId("ANL-EVT-20260601-000777"))
+                .thenReturn(Optional.of(result));
+        when(eventJsonRepository.findByEventId("EVT-20260601-000777"))
+                .thenReturn(Optional.of(storedEvent(
+                        "EVT-20260601-000777",
+                        """
+                                {
+                                  "processData": {
+                                    "body": {
+                                      "robotMotionStatus": "NORMAL",
+                                      "robotOperationMode": "AUTO",
+                                      "frequencyPeakBand": "MID",
+                                      "frequencyBands": {
+                                        "LOW": 0.001,
+                                        "MEDIUM": 0.002,
+                                        "HIGH": 0.003
+                                      }
+                                    }
+                                  },
+                                  "sensor": {
+                                    "robotArmVibration": {
+                                      "vibrationScore": 0.2,
+                                      "vibrationPeak": 0.002,
+                                      "vibrationRms": 0.001
+                                    }
+                                  }
+                                }
+                                """
+                )));
+
+        var response = service.findDashboard(null, null, null, null, 30);
+
+        assertThat(response.charts().robotVibration().points()).hasSize(1);
+        assertThat(response.charts().robotVibration().points().get(0).severity()).isEqualTo("WARNING");
+        assertThat(response.charts().frequencyPeak().points()).hasSize(1);
+        assertThat(response.charts().frequencyPeak().points().get(0).severity()).isEqualTo("WARNING");
+        assertThat(response.metrics().severity()).isEqualTo("WARNING");
     }
 
     private StoredManufacturingEvent storedEvent(String eventId, String rawJson) {

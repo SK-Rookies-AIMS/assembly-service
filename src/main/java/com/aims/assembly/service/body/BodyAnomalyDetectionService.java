@@ -237,7 +237,7 @@ public class BodyAnomalyDetectionService {
         boolean isAbnormal = Boolean.TRUE.equals(analysis.getIsAbnormal())
                 || (analysis.getRiskScore() != null && analysis.getRiskScore() >= 30.0);
         String severity = analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name();
-        if (isAbnormal && "NORMAL".equals(severity)) {
+        if (isAbnormal && !"CRITICAL".equals(severity) && !"WARNING".equals(severity)) {
             severity = "WARNING";
         }
 

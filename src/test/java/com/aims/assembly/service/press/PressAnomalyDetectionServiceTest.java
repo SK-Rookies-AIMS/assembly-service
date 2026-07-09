@@ -43,6 +43,10 @@ class PressAnomalyDetectionServiceTest {
                 LocalDateTime.of(2026, 6, 1, 23, 59, 59, 999_999_999),
                 PageRequest.of(0, 10_000)
         )).thenReturn(List.of(result));
+        when(repository.findMaxRiskScoreByEventTimeBetween(
+                LocalDateTime.of(2026, 6, 1, 0, 0),
+                LocalDateTime.of(2026, 6, 1, 23, 59, 59, 999_999_999)
+        )).thenReturn(78.0);
 
         var response = service.findDashboard(null, null, null, null, 30);
 
@@ -57,6 +61,19 @@ class PressAnomalyDetectionServiceTest {
         assertThat(response.chart().get(0).actualCycleTimeSec()).isEqualTo(43.0);
         assertThat(response.chart().get(0).cycleTimeGapSec()).isEqualTo(3.0);
         assertThat(response.chart().get(0).timestampDelaySec()).isEqualTo(3.0);
+        assertThat(response.charts().riskScore().title()).isEqualTo("프레스 위험도");
+        assertThat(response.charts().riskScore().metricKey()).isEqualTo("riskScore");
+        assertThat(response.charts().riskScore().points()).hasSize(1);
+        assertThat(response.charts().riskScore().points().get(0).value()).isEqualTo(78.0);
+        assertThat(response.charts().riskScore().points().get(0).countIncreaseYn()).isFalse();
+        assertThat(response.charts().cycleTime().title()).isEqualTo("프레스 사이클 타임");
+        assertThat(response.charts().cycleTime().points()).hasSize(1);
+        assertThat(response.charts().cycleTime().points().get(0).targetCycleTimeSec()).isEqualTo(40.0);
+        assertThat(response.charts().cycleTime().points().get(0).actualCycleTimeSec()).isEqualTo(43.0);
+        assertThat(response.charts().delay().title()).isEqualTo("프레스 지연/갭");
+        assertThat(response.charts().delay().points()).hasSize(1);
+        assertThat(response.charts().delay().points().get(0).cycleTimeGapSec()).isEqualTo(3.0);
+        assertThat(response.charts().delay().points().get(0).timestampDelaySec()).isEqualTo(3.0);
         assertThat(response.metrics().targetCycleTimeSec()).isEqualTo(40.0);
         assertThat(response.metrics().actualCycleTimeSec()).isEqualTo(43.0);
         assertThat(response.metrics().cycleTimeGapSec()).isEqualTo(3.0);

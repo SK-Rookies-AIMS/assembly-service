@@ -84,6 +84,7 @@ public class PressAnomalyDetectionService {
 
         Double dbMaxRiskScore = repository.findMaxRiskScoreByEventTimeBetween(rangeFrom, rangeTo);
         double maxRiskScore = dbMaxRiskScore != null ? dbMaxRiskScore : 0.0;
+        PressAnomalyDetectionResponse.Charts charts = PressAnomalyDetectionResponseMapper.toCharts(points);
 
         PressAnomalyDetectionResponse response = PressAnomalyDetectionResponseMapper.toResponse(
                 targetDate,
@@ -92,6 +93,7 @@ public class PressAnomalyDetectionService {
                 previousEndAt,
                 dateOptions,
                 toMetrics(summaryPoint, detected, maxRiskScore),
+                charts,
                 points,
                 toAlert(points, detected, summaryPoint)
         );
@@ -144,13 +146,16 @@ public class PressAnomalyDetectionService {
                     new PressAnomalyDetectionResponse.ChartPoint(
                             null, null, null,
                             0.0, 0.0, 0.0, 0.0,
-                            maxRiskScore, null, null,
+                            maxRiskScore,
+                            null, null,
                             detected ? "WARNING" : "NORMAL"
                     )
             );
         }
         // Use the DB maxRiskScore instead of the single point's score
-        String computedSeverity = maxRiskScore >= 80.0 ? "CRITICAL" : (maxRiskScore >= 60.0 ? "WARNING" : point.severity());
+        String computedSeverity = maxRiskScore >= 80.0
+                ? "CRITICAL"
+                : (maxRiskScore >= 60.0 ? "WARNING" : point.severity());
         PressAnomalyDetectionResponse.ChartPoint updatedPoint = new PressAnomalyDetectionResponse.ChartPoint(
                 point.eventId(),
                 point.analysisId(),
