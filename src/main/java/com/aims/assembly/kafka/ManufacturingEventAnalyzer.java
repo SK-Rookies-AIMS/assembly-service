@@ -9,6 +9,8 @@ import com.aims.assembly.kafka.model.ManufacturingRawEvent;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -162,8 +164,8 @@ public class ManufacturingEventAnalyzer {
         return new ManufacturingAnalysisEvent(
                 "ANL-" + UUID.randomUUID(),
                 event.eventId(),
-                event.eventTime(),
-                LocalDateTime.now(),
+                toOffsetDateTime(event.eventTime()),
+                OffsetDateTime.now(),
                 text(event.eventJson(), "location", "factoryCode"),
                 text(event.eventJson(), "location", "lineCode"),
                 event.processCode(),
@@ -218,7 +220,7 @@ public class ManufacturingEventAnalyzer {
                 "CRITICAL".equals(analysis.riskLevel()) ? "STOPPED" : "RUNNING",
                 analysis.riskLevel(),
                 overallRiskScore(analysis),
-                analysis.operationRate()
+                analysis.operationRate() == null ? 0.0 : analysis.operationRate()
         );
     }
 
@@ -670,6 +672,10 @@ public class ManufacturingEventAnalyzer {
             return 0;
         }
         return round(clamp(processingTimeSec / plannedTimeSec * 100));
+    }
+
+    private OffsetDateTime toOffsetDateTime(LocalDateTime dateTime) {
+        return dateTime == null ? null : dateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
     private String riskLevel(double score) {

@@ -8,12 +8,15 @@ import com.aims.assembly.dto.process.ProcessAvailableDatesResponse;
 import com.aims.assembly.service.process.ProcessDashboardService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -316,6 +319,50 @@ class ProcessDashboardControllerTest {
                 .andExpect(jsonPath("$.data.items[2].operationRate").value(0.0));
     }
 
+    @Test
+    void equipmentOperationRateEndpointReturnsOkWithRedisRestoredResponse() throws Exception {
+        EquipmentOperationRateResponse cacheMissResponse = new EquipmentOperationRateResponse(List.of(
+                item("PRESS", "프레스", 1, 1, 2, 1),
+                item("BODY", "차체", 5, 0, 0, 0),
+                item("PAINT", "도장", 5, 0, 0, 0),
+                item("ASSEMBLY", "의장", 5, 0, 0, 0)
+        ));
+        GenericJacksonJsonRedisSerializer serializer = redisJsonSerializer();
+        EquipmentOperationRateResponse cacheHitResponse =
+                (EquipmentOperationRateResponse) serializer.deserialize(serializer.serialize(cacheMissResponse));
+        when(service.getEquipmentOperationRate()).thenReturn(cacheHitResponse);
+
+        mockMvc.perform(get("/api/process/equipment/operation-rate"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].processCode").value("PRESS"))
+                .andExpect(jsonPath("$.data.items[0].operationRate").value(40.0))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.RUNNING").value(1))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.WARNING").value(1))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.STOPPED").value(2))
+                .andExpect(jsonPath("$.data.items[0].statusCounts.FAULT").value(1));
+    }
+
+    @Test
+    void equipmentOperationRateEndpointReturnsOkForRepeatedRedisRestoredResponses() throws Exception {
+        EquipmentOperationRateResponse cacheMissResponse = new EquipmentOperationRateResponse(List.of(
+                item("PRESS", "프레스", 1, 1, 2, 1),
+                item("BODY", "차체", 5, 0, 0, 0),
+                item("PAINT", "도장", 5, 0, 0, 0),
+                item("ASSEMBLY", "의장", 5, 0, 0, 0)
+        ));
+        GenericJacksonJsonRedisSerializer serializer = redisJsonSerializer();
+        EquipmentOperationRateResponse cacheHitResponse =
+                (EquipmentOperationRateResponse) serializer.deserialize(serializer.serialize(cacheMissResponse));
+        when(service.getEquipmentOperationRate()).thenReturn(cacheHitResponse);
+
+        for (int i = 0; i < 5; i++) {
+            mockMvc.perform(get("/api/process/equipment/operation-rate"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items[0].operationRate").value(40.0))
+                    .andExpect(jsonPath("$.data.items[0].statusCounts.STOPPED").value(2));
+        }
+    }
+
     private EquipmentOperationRateResponse.Item item(
             String processCode,
             String processName,
@@ -324,12 +371,11 @@ class ProcessDashboardControllerTest {
             long stoppedCount,
             long faultCount
     ) {
-        Map<EquipmentOperationStatus, Long> statusCounts =
-                new EnumMap<>(EquipmentOperationStatus.class);
-        statusCounts.put(EquipmentOperationStatus.RUNNING, runningCount);
-        statusCounts.put(EquipmentOperationStatus.WARNING, warningCount);
-        statusCounts.put(EquipmentOperationStatus.STOPPED, stoppedCount);
-        statusCounts.put(EquipmentOperationStatus.FAULT, faultCount);
+        Map<String, Long> statusCounts = new LinkedHashMap<>();
+        statusCounts.put(EquipmentOperationStatus.RUNNING.name(), runningCount);
+        statusCounts.put(EquipmentOperationStatus.WARNING.name(), warningCount);
+        statusCounts.put(EquipmentOperationStatus.STOPPED.name(), stoppedCount);
+        statusCounts.put(EquipmentOperationStatus.FAULT.name(), faultCount);
         long operatingCount = runningCount + warningCount;
         long totalCount = operatingCount + stoppedCount + faultCount;
         double operationRate = totalCount == 0
@@ -347,5 +393,18 @@ class ProcessDashboardControllerTest {
                 operationRate,
                 statusCounts
         );
+    }
+
+    private GenericJacksonJsonRedisSerializer redisJsonSerializer() {
+        PolymorphicTypeValidator typeValidator = BasicPolymorphicTypeValidator.builder()
+                .allowIfSubType("com.aims.assembly.")
+                .allowIfSubType("java.lang.")
+                .allowIfSubType("java.time.")
+                .allowIfSubType("java.util.")
+                .build();
+
+        return GenericJacksonJsonRedisSerializer.builder()
+                .enableDefaultTyping(typeValidator)
+                .build();
     }
 }

@@ -103,7 +103,7 @@ public class ManufacturingAnalysisResultService {
                         assemblyRiskOverride.severity(),
                         assemblyRiskOverride.riskScore(),
                         analysis.reason() == null ? null : analysis.reason().mainReason(),
-                        analysis.analyzedAt()
+                        analysis.analyzedAt() == null ? null : analysis.analyzedAt().toLocalDateTime()
                 )
         );
 

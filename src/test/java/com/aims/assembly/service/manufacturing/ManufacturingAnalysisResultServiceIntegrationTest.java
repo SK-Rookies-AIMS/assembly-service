@@ -24,6 +24,8 @@ import org.springframework.test.annotation.Commit;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Collections;
 import java.util.Map;
 
@@ -463,8 +465,8 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
         return new ManufacturingAnalysisEvent(
                 "ANL-100",
                 raw.eventId(),
-                raw.eventTime(),
-                analyzedAt,
+                offset(raw.eventTime()),
+                offset(analyzedAt),
                 "FAC",
                 "LINE",
                 raw.processCode(),
@@ -485,5 +487,9 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
                 new ManufacturingAnalysisEvent.Reason("Normal", Collections.emptyList()),
                 new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
         );
+    }
+
+    private OffsetDateTime offset(LocalDateTime dateTime) {
+        return dateTime == null ? null : dateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 }
