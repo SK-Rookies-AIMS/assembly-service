@@ -888,12 +888,18 @@ public class ManufacturingAnalysisResultService {
             actualSequence = null;
         }
 
+        // sequence가 동일하면 sequenceErrorCount는 반드시 0이어야 한다.
+        // equipmentFault 등 다른 이유로 abnormal이 되어도 순서 오류는 sequence 문자열 기준으로 결정한다.
+        boolean sequencesMatch = expectedSequence != null
+                && expectedSequence.equals(actualSequence);
+
         int seqVariation = eventIdIndex(savedResult.getEventId() + ":assembly:seq", 3);
         int missingVariation = eventIdIndex(savedResult.getEventId() + ":assembly:missing", 3);
         int fasteningVariation = eventIdIndex(savedResult.getEventId() + ":assembly:fastening", 4);
 
         if (assemblyAbnormal) {
-            if (sequenceErrorCount == null || sequenceErrorCount <= 0) {
+            // sequenceError 합성: sequence가 실제로 다를 때만 허용
+            if (!sequencesMatch && (sequenceErrorCount == null || sequenceErrorCount <= 0)) {
                 sequenceErrorCount = riskScore >= 80 ? 2 + seqVariation : 1 + seqVariation;
             }
 
@@ -908,6 +914,11 @@ public class ManufacturingAnalysisResultService {
             if (sequenceErrorCount == null) sequenceErrorCount = 0;
             if (missingPartCount == null) missingPartCount = 0;
             if (fasteningErrorCount == null) fasteningErrorCount = 0;
+        }
+
+        // 최종 정합성 보정: sequence 문자열이 동일하면 sequenceErrorCount는 0
+        if (sequencesMatch) {
+            sequenceErrorCount = 0;
         }
 
         return new AssemblyCalculatedValues(
@@ -962,12 +973,21 @@ public class ManufacturingAnalysisResultService {
                 : intVal(json, "processData", "assembly", "fasteningErrorCount");
 
         // [FIX] 원본 이벤트가 이상(Abnormal)이지만 카운트가 누락된 경우, 보정값을 부여하여 위험도를 재계산한다.
+        // 단, sequenceErrorCount 보정은 expected/actual sequence가 실제로 다를 때만 적용한다.
+        // sequence가 동일한데 equipmentFault 등으로 abnormal이 된 경우 sequence 오류를 부풀리지 않는다.
         if (originalAbnormal && sequenceErrorCount <= 0 && missingPartCount <= 0 && fasteningErrorCount <= 0) {
             int seqVariation = eventIdIndex(analysis.eventId() + ":assembly:seq", 3);
             int missingVariation = eventIdIndex(analysis.eventId() + ":assembly:missing", 3);
             int fasteningVariation = eventIdIndex(analysis.eventId() + ":assembly:fastening", 4);
 
-            sequenceErrorCount = originalRiskScore >= 80 ? 2 + seqVariation : 1 + seqVariation;
+            String expectedSeq = text(json, "processData", "assembly", "expectedSequence");
+            String actualSeq = text(json, "processData", "assembly", "actualSequence");
+            boolean sequencesMatch = expectedSeq != null && expectedSeq.equals(actualSeq);
+
+            // sequence가 다를 때만 sequenceError 보정 적용
+            if (!sequencesMatch) {
+                sequenceErrorCount = originalRiskScore >= 80 ? 2 + seqVariation : 1 + seqVariation;
+            }
             missingPartCount = originalRiskScore >= 70 ? 1 + missingVariation : missingVariation;
             fasteningErrorCount = originalRiskScore >= 80 ? 2 + fasteningVariation : 1 + fasteningVariation;
         }
