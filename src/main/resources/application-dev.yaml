@@ -6,7 +6,7 @@ spring:
       timeout: ${REDIS_TIMEOUT:3s}
 redis:
   cache:
-    ttl: ${REDIS_CACHE_TTL:10m}
+    ttl: ${REDIS_CACHE_TTL:1m}
 opensearch:
   scheme: ${OPENSEARCH_SCHEME:http}
   host: ${OPENSEARCH_HOST:localhost}
