@@ -13,6 +13,7 @@ import com.aims.assembly.dto.process.ProcessAvailableDatesResponse;
 import com.aims.assembly.mapper.ProcessDashboardResponseMapper;
 import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
+import com.aims.assembly.repository.car.CarMasterRepository;
 import com.aims.assembly.repository.equipment.EquipmentOperationRateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
@@ -27,6 +28,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,6 +58,7 @@ public class ProcessDashboardService {
     private final PaintAnalysisResultRepository paintRepository;
     private final AssemblyAnalysisResultRepository assemblyRepository;
     private final EquipmentOperationRateRepository equipmentOperationRateRepository;
+    private final CarMasterRepository carMasterRepository;
 
     @Cacheable(cacheNames = "process-equipment-operation-rate-v1", key = "'all'")
     public EquipmentOperationRateResponse getEquipmentOperationRate() {
@@ -242,12 +245,13 @@ public class ProcessDashboardService {
                 averageRiskScore
         );
 
+        Map<Long, String> vehicleIdsByCarMasterId = vehicleIdsByCarMasterId(vehicleRows);
         List<AssemblyDashboardResponse.VehicleRow> vehicles = vehicleRows.stream()
                 .map(row -> {
                     ManufacturingAnalysisResult result = row.getAnalysisResult();
                     return ProcessDashboardResponseMapper.toAssemblyVehicleRow(
                             result.getCarMasterId(),
-                            carDisplayId(result.getCarMasterId()),
+                            vehicleIdsByCarMasterId.get(result.getCarMasterId()),
                             row.getExpectedSequence(),
                             row.getActualSequence(),
                             zeroIfNull(row.getSequenceErrorCount()),
@@ -341,8 +345,18 @@ public class ProcessDashboardService {
                 faultCount,
                 totalCount,
                 percentage(operatingCount, totalCount),
-                new EnumMap<>(statusCounts)
+                statusCountsForResponse(statusCounts)
         );
+    }
+
+    private Map<String, Long> statusCountsForResponse(
+            EnumMap<EquipmentOperationStatus, Long> statusCounts
+    ) {
+        Map<String, Long> responseCounts = new LinkedHashMap<>();
+        for (EquipmentOperationStatus status : EquipmentOperationStatus.values()) {
+            responseCounts.put(status.name(), statusCounts.getOrDefault(status, 0L));
+        }
+        return responseCounts;
     }
 
     private String processName(ProcessCode processCode) {
@@ -798,8 +812,31 @@ public class ProcessDashboardService {
         return value == null ? 0 : value;
     }
 
-    private String carDisplayId(Long carMasterId) {
-        return carMasterId == null ? null : "CAR-%06d".formatted(carMasterId);
+    private Map<Long, String> vehicleIdsByCarMasterId(List<AssemblyAnalysisResult> rows) {
+        List<Long> carMasterIds = rows.stream()
+                .map(row -> row.getAnalysisResult().getCarMasterId())
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (carMasterIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, String> vehicleIdsByCarMasterId = new LinkedHashMap<>(
+                carMasterRepository.findVehicleIdsByIdIn(carMasterIds)
+        );
+        vehicleIdsByCarMasterId.entrySet().removeIf(entry -> !hasText(entry.getValue()));
+
+        for (Long carMasterId : carMasterIds) {
+            if (!vehicleIdsByCarMasterId.containsKey(carMasterId)) {
+                log.warn("car_master vehicle_id is missing. carMasterId={}", carMasterId);
+            }
+        }
+        return vehicleIdsByCarMasterId;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private String nullToDash(String value) {

@@ -24,6 +24,8 @@ import org.mockito.ArgumentCaptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
@@ -389,8 +391,8 @@ class ManufacturingAnalysisResultServiceTest {
         return new ManufacturingAnalysisEvent(
                 "ANL-" + raw.eventId(),
                 raw.eventId(),
-                raw.eventTime(),
-                analyzedAt,
+                offset(raw.eventTime()),
+                offset(analyzedAt),
                 "FAC",
                 "LINE",
                 raw.processCode(),
@@ -424,7 +426,7 @@ class ManufacturingAnalysisResultServiceTest {
                 )
         ));
         ManufacturingAnalysisEvent analysis = new ManufacturingAnalysisEvent(
-                "ANL-1", "EVT-TEST-1", raw.eventTime(), raw.eventTime(),
+                "ANL-1", "EVT-TEST-1", offset(raw.eventTime()), offset(raw.eventTime()),
                 "FAC", "LINE", ProcessCode.ASSEMBLY, "EQ-100", "EQ-NAME", "ROBOT", "PROD", "CAR", raw.carMasterId(),
                 "PROCESS_RISK_ANALYSIS",
                 new ManufacturingAnalysisEvent.RiskScores(0.0, 0.0, 0.0, 0.0, new ManufacturingAnalysisEvent.ProcessRisk(0.0, null, null, null)),
@@ -441,6 +443,10 @@ class ManufacturingAnalysisResultServiceTest {
         AssemblyAnalysisResult result = captor.getValue();
         assertThat(result.getExpectedSequence()).isEqualTo("P01>B03>PA02>A03");
         assertThat(result.getActualSequence()).isEqualTo("P01>B03>PA02>A03");
+    }
+
+    private OffsetDateTime offset(LocalDateTime dateTime) {
+        return dateTime == null ? null : dateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
     @Test

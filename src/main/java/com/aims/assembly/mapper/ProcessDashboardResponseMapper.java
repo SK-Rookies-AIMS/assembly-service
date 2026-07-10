@@ -1,6 +1,5 @@
 package com.aims.assembly.mapper;
 
-import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.dto.process.AssemblyDashboardResponse;
 import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
@@ -32,7 +31,7 @@ public final class ProcessDashboardResponseMapper {
             long faultCount,
             long totalCount,
             double operationRate,
-            Map<EquipmentOperationStatus, Long> statusCounts
+            Map<String, Long> statusCounts
     ) {
         return new EquipmentOperationRateResponse.Item(
                 processCode,

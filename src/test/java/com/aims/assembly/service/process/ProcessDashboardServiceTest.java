@@ -12,21 +12,29 @@ import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
 import com.aims.assembly.repository.analysis.AssemblyAnalysisResultRepository;
 import com.aims.assembly.repository.analysis.PaintAnalysisResultRepository;
+import com.aims.assembly.repository.car.CarMasterRepository;
 import com.aims.assembly.repository.equipment.EquipmentOperationRateRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
+import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ProcessDashboardServiceTest {
@@ -36,6 +44,7 @@ class ProcessDashboardServiceTest {
             mock(AssemblyAnalysisResultRepository.class);
     private final EquipmentOperationRateRepository equipmentOperationRateRepository =
             mock(EquipmentOperationRateRepository.class);
+    private final CarMasterRepository carMasterRepository = mock(CarMasterRepository.class);
     private ProcessDashboardService service;
 
     @BeforeEach
@@ -43,8 +52,17 @@ class ProcessDashboardServiceTest {
         service = new ProcessDashboardService(
                 paintRepository,
                 assemblyRepository,
-                equipmentOperationRateRepository
+                equipmentOperationRateRepository,
+                carMasterRepository
         );
+        when(carMasterRepository.findVehicleIdsByIdIn(any())).thenAnswer(invocation -> {
+            Iterable<Long> ids = invocation.getArgument(0);
+            Map<Long, String> vehicleIdsById = new LinkedHashMap<>();
+            for (Long id : ids) {
+                vehicleIdsById.put(id, "VEHICLE-%04d".formatted(id));
+            }
+            return vehicleIdsById;
+        });
     }
 
     @Test
@@ -160,6 +178,8 @@ class ProcessDashboardServiceTest {
                 eq(LocalDateTime.of(2026, 6, 18, 0, 0)),
                 eq(LocalDateTime.of(2026, 6, 19, 0, 0))
         )).thenReturn(List.of(row));
+        when(carMasterRepository.findVehicleIdsByIdIn(List.of(1L)))
+                .thenReturn(Map.of(1L, "AVANTE-0001"));
 
         AssemblyDashboardResponse response = service.getAssemblyDashboard(null, null, null, 30);
 
@@ -174,7 +194,8 @@ class ProcessDashboardServiceTest {
         assertThat(response.summary().fasteningErrorCount()).isEqualTo(1);
         assertThat(response.summary().averageRiskScore()).isEqualTo(86.5);
         assertThat(response.vehicles()).singleElement().satisfies(vehicle -> {
-            assertThat(vehicle.carDisplayId()).isEqualTo("CAR-000001");
+            assertThat(vehicle.carMasterId()).isEqualTo(1L);
+            assertThat(vehicle.carDisplayId()).isEqualTo("AVANTE-0001");
             assertThat(vehicle.expectedSequence()).isEqualTo("A01 > A02 > A03 > A04");
             assertThat(vehicle.actualSequence()).isEqualTo("A01 > A03 > A02 > A04");
             assertThat(vehicle.sequenceErrorCount()).isEqualTo(1);
@@ -185,6 +206,67 @@ class ProcessDashboardServiceTest {
         });
         assertThat(response.alert().messages())
                 .contains("조립 순서 오류와 체결 오류 동시 감지");
+    }
+
+    @Test
+    void assemblyDashboardUsesVehicleIdFromCarMasterForDisplayId() {
+        AssemblyAnalysisResult first = assemblyRow(34L, LocalDateTime.of(2026, 6, 18, 10, 0));
+        AssemblyAnalysisResult second = assemblyRow(35L, LocalDateTime.of(2026, 6, 18, 10, 5));
+        when(assemblyRepository.findDashboardRows(any(), any(), any(Pageable.class)))
+                .thenReturn(List.of(second, first));
+        when(assemblyRepository.findDashboardSummaryRows(any(), any()))
+                .thenReturn(List.of(first, second));
+        when(carMasterRepository.findVehicleIdsByIdIn(List.of(34L, 35L))).thenReturn(Map.of(
+                34L, "AVANTE-0034",
+                35L, "SONATA-0035"
+        ));
+
+        AssemblyDashboardResponse response =
+                service.getAssemblyDashboard(LocalDate.of(2026, 6, 18), null, null, 30);
+
+        assertThat(response.vehicles()).extracting(AssemblyDashboardResponse.VehicleRow::carMasterId)
+                .containsExactly(34L, 35L);
+        assertThat(response.vehicles()).extracting(AssemblyDashboardResponse.VehicleRow::carDisplayId)
+                .containsExactly("AVANTE-0034", "SONATA-0035");
+        verify(carMasterRepository, times(1)).findVehicleIdsByIdIn(List.of(34L, 35L));
+    }
+
+    @Test
+    void assemblyDashboardDoesNotGenerateFakeDisplayIdWhenCarMasterIsMissing() {
+        AssemblyAnalysisResult row = assemblyRow(99L, LocalDateTime.of(2026, 6, 18, 10, 0));
+        when(assemblyRepository.findDashboardRows(any(), any(), any(Pageable.class)))
+                .thenReturn(List.of(row));
+        when(assemblyRepository.findDashboardSummaryRows(any(), any()))
+                .thenReturn(List.of(row));
+        when(carMasterRepository.findVehicleIdsByIdIn(List.of(99L))).thenReturn(Map.of());
+
+        AssemblyDashboardResponse response =
+                service.getAssemblyDashboard(LocalDate.of(2026, 6, 18), null, null, 30);
+
+        assertThat(response.vehicles()).singleElement().satisfies(vehicle -> {
+            assertThat(vehicle.carMasterId()).isEqualTo(99L);
+            assertThat(vehicle.carDisplayId()).isNull();
+        });
+    }
+
+    @Test
+    void assemblyDashboardDoesNotGenerateFakeDisplayIdWhenVehicleIdIsNull() {
+        AssemblyAnalysisResult row = assemblyRow(100L, LocalDateTime.of(2026, 6, 18, 10, 0));
+        when(assemblyRepository.findDashboardRows(any(), any(), any(Pageable.class)))
+                .thenReturn(List.of(row));
+        when(assemblyRepository.findDashboardSummaryRows(any(), any()))
+                .thenReturn(List.of(row));
+        Map<Long, String> vehicleIds = new LinkedHashMap<>();
+        vehicleIds.put(100L, null);
+        when(carMasterRepository.findVehicleIdsByIdIn(List.of(100L))).thenReturn(vehicleIds);
+
+        AssemblyDashboardResponse response =
+                service.getAssemblyDashboard(LocalDate.of(2026, 6, 18), null, null, 30);
+
+        assertThat(response.vehicles()).singleElement().satisfies(vehicle -> {
+            assertThat(vehicle.carMasterId()).isEqualTo(100L);
+            assertThat(vehicle.carDisplayId()).isNull();
+        });
     }
 
     @Test
@@ -434,22 +516,99 @@ class ProcessDashboardServiceTest {
             assertThat(item.faultCount()).isZero();
             assertThat(item.totalCount()).isEqualTo(5);
             assertThat(item.operationRate()).isEqualTo(80.0);
-            assertThat(item.statusCounts()).containsEntry(EquipmentOperationStatus.WARNING, 1L);
+            assertThat(item.statusCounts()).containsEntry("WARNING", 1L);
         });
         assertThat(response.items().get(2)).satisfies(item -> {
             assertThat(item.processCode()).isEqualTo("PAINT");
             assertThat(item.totalCount()).isZero();
             assertThat(item.operationRate()).isEqualTo(0.0);
-            assertThat(item.statusCounts()).containsEntry(EquipmentOperationStatus.RUNNING, 0L)
-                    .containsEntry(EquipmentOperationStatus.WARNING, 0L)
-                    .containsEntry(EquipmentOperationStatus.STOPPED, 0L)
-                    .containsEntry(EquipmentOperationStatus.FAULT, 0L);
+            assertThat(item.statusCounts()).containsEntry("RUNNING", 0L)
+                    .containsEntry("WARNING", 0L)
+                    .containsEntry("STOPPED", 0L)
+                    .containsEntry("FAULT", 0L);
         });
         assertThat(response.items().get(3)).satisfies(item -> {
             assertThat(item.warningCount()).isEqualTo(2);
             assertThat(item.faultCount()).isEqualTo(1);
             assertThat(item.operationRate()).isEqualTo(66.7);
         });
+    }
+
+    @Test
+    void equipmentOperationRateStatusCountsNormalizesIntegerValuesToLongValues() {
+        Map<String, Object> statusCounts = new LinkedHashMap<>();
+        statusCounts.put("RUNNING", 1);
+        statusCounts.put("WARNING", 1L);
+        statusCounts.put("STOPPED", 2);
+        statusCounts.put("FAULT", 1);
+
+        EquipmentOperationRateResponse.Item item = new EquipmentOperationRateResponse.Item(
+                "PRESS",
+                "프레스",
+                1,
+                1,
+                2,
+                2,
+                1,
+                5,
+                40.0,
+                (Map) statusCounts
+        );
+
+        assertThat(item.statusCounts()).containsEntry("RUNNING", 1L)
+                .containsEntry("WARNING", 1L)
+                .containsEntry("STOPPED", 2L)
+                .containsEntry("FAULT", 1L);
+        assertThat(item.statusCounts().values()).allSatisfy(value -> assertThat(value).isInstanceOf(Long.class));
+    }
+
+    @Test
+    void equipmentOperationRateResponseSurvivesRedisSerializerRoundTrip() {
+        EquipmentOperationRateResponse response = new EquipmentOperationRateResponse(List.of(
+                new EquipmentOperationRateResponse.Item(
+                        "PRESS",
+                        "프레스",
+                        1,
+                        1,
+                        2,
+                        2,
+                        1,
+                        5,
+                        40.0,
+                        Map.of(
+                                "RUNNING", 1L,
+                                "WARNING", 1L,
+                                "STOPPED", 2L,
+                                "FAULT", 1L
+                        )
+                )
+        ));
+        GenericJacksonJsonRedisSerializer serializer = redisJsonSerializer();
+
+        Object restored = serializer.deserialize(serializer.serialize(response));
+
+        assertThat(restored).isInstanceOf(EquipmentOperationRateResponse.class);
+        EquipmentOperationRateResponse restoredResponse = (EquipmentOperationRateResponse) restored;
+        EquipmentOperationRateResponse.Item restoredItem = restoredResponse.items().get(0);
+        assertThat(restoredItem.statusCounts()).containsEntry("RUNNING", 1L)
+                .containsEntry("WARNING", 1L)
+                .containsEntry("STOPPED", 2L)
+                .containsEntry("FAULT", 1L);
+        assertThat(restoredItem.statusCounts().values())
+                .allSatisfy(value -> assertThat(value).isInstanceOf(Long.class));
+    }
+
+    private GenericJacksonJsonRedisSerializer redisJsonSerializer() {
+        PolymorphicTypeValidator typeValidator = BasicPolymorphicTypeValidator.builder()
+                .allowIfSubType("com.aims.assembly.")
+                .allowIfSubType("java.lang.")
+                .allowIfSubType("java.time.")
+                .allowIfSubType("java.util.")
+                .build();
+
+        return GenericJacksonJsonRedisSerializer.builder()
+                .enableDefaultTyping(typeValidator)
+                .build();
     }
 
     private ManufacturingAnalysisResult result(
@@ -519,23 +678,32 @@ class ProcessDashboardServiceTest {
         List<AssemblyAnalysisResult> rows = new ArrayList<>();
         for (int index = 0; index < count; index++) {
             LocalDateTime eventTime = LocalDateTime.of(2026, 7, 7, 10, 0).plusMinutes(index * 6L);
-            rows.add(AssemblyAnalysisResult.builder()
-                    .analysisResult(result(
-                            ProcessCode.ASSEMBLY,
-                            (long) index,
-                            Severity.NORMAL,
-                            false,
-                            index,
-                            eventTime,
-                            eventTime.plusSeconds(5)
-                    ))
-                    .expectedSequence("A01 > A02")
-                    .actualSequence("A01 > A02")
-                    .sequenceErrorCount(0)
-                    .missingPartCount(0)
-                    .fasteningErrorCount(0)
-                    .build());
+            rows.add(assemblyRow((long) index, eventTime, index));
         }
         return rows;
     }
+
+    private AssemblyAnalysisResult assemblyRow(Long carMasterId, LocalDateTime eventTime) {
+        return assemblyRow(carMasterId, eventTime, 0.0);
+    }
+
+    private AssemblyAnalysisResult assemblyRow(Long carMasterId, LocalDateTime eventTime, double riskScore) {
+        return AssemblyAnalysisResult.builder()
+                .analysisResult(result(
+                        ProcessCode.ASSEMBLY,
+                        carMasterId,
+                        Severity.NORMAL,
+                        false,
+                        riskScore,
+                        eventTime,
+                        eventTime.plusSeconds(5)
+                ))
+                .expectedSequence("A01 > A02")
+                .actualSequence("A01 > A02")
+                .sequenceErrorCount(0)
+                .missingPartCount(0)
+                .fasteningErrorCount(0)
+                .build();
+    }
+
 }

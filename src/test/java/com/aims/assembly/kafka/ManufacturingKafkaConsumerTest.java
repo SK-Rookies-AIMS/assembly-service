@@ -18,6 +18,8 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -41,6 +43,79 @@ class ManufacturingKafkaConsumerTest {
                 .contains("\"analyzedAt\":\"2026-06-30T15:31:53.009548\"")
                 .contains("\"createdAt\":\"2026-06-30T06:31:53\"")
                 .contains("\"status\":\"WARNING\"");
+    }
+
+    @Test
+    void analysisEventAllowsNullOperationRateAndOffsetAnalyzedAt() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ManufacturingEventAnalyzer analyzer = mock(ManufacturingEventAnalyzer.class);
+        ManufacturingProcessRouter processRouter = mock(ManufacturingProcessRouter.class);
+        ManufacturingKafkaProducer producer = mock(ManufacturingKafkaProducer.class);
+        KafkaMessageTraceStore traceStore = mock(KafkaMessageTraceStore.class);
+        ManufacturingRawEventParser parser = mock(ManufacturingRawEventParser.class);
+        EquipmentStateService equipmentStateService = mock(EquipmentStateService.class);
+        ManufacturingEventJsonRepository eventRepository = mock(ManufacturingEventJsonRepository.class);
+        ManufacturingAnalysisResultService analysisResultService =
+                mock(ManufacturingAnalysisResultService.class);
+        ManufacturingKafkaConsumer consumer = new ManufacturingKafkaConsumer(
+                objectMapper,
+                analyzer,
+                processRouter,
+                producer,
+                traceStore,
+                parser,
+                equipmentStateService,
+                eventRepository,
+                analysisResultService
+        );
+        String payload = """
+                {
+                  "analysisId": "ANL-1",
+                  "eventId": "EVT-1",
+                  "eventTime": "2026-07-10T10:45:55.462944+09:00",
+                  "analyzedAt": "2026-07-10T10:45:55.462944+09:00",
+                  "processCode": "PRESS",
+                  "equipmentCode": "EQ_PRESS_001",
+                  "analysisType": "PROCESS_RISK_ANALYSIS",
+                  "riskScores": {
+                    "overallRiskScore": 10.0,
+                    "bottleneckRisk": null,
+                    "defectTransferRisk": null,
+                    "equipmentRisk": null,
+                    "processRisk": {
+                      "pressStopRisk": 10.0,
+                      "robotCollisionRisk": null,
+                      "paintQualityRisk": null,
+                      "assemblySequenceRisk": null
+                    }
+                  },
+                  "operationRate": null,
+                  "riskLevel": "LOW",
+                  "analysisResult": {
+                    "isAbnormal": false,
+                    "isBottleneck": false,
+                    "isQualityDefect": false,
+                    "isEquipmentFault": false,
+                    "isSequenceError": false
+                  },
+                  "reason": {
+                    "mainReason": "normal",
+                    "detailReasons": []
+                  },
+                  "recommendation": {
+                    "actionType": "NONE",
+                    "message": "none"
+                  }
+                }
+                """;
+
+        consumer.consumeAnalysisForAlert(
+                new ConsumerRecord<>("factory.manufacturing.analysis", 0, 11847L, "EVT-1", payload)
+        );
+
+        verify(traceStore).recordConsumed(any(), eq("alert-analysis-consumer-group"), eq("EVT-1"));
+        verify(analyzer).requiresAlert(any(ManufacturingAnalysisEvent.class));
+        verify(producer, never()).sendAlert(any());
     }
 
     @Test
@@ -275,8 +350,8 @@ class ManufacturingKafkaConsumerTest {
         return new ManufacturingAnalysisEvent(
                 "ANL-1",
                 raw.eventId(),
-                raw.eventTime(),
-                raw.eventTime(),
+                offset(raw.eventTime()),
+                offset(raw.eventTime()),
                 null,
                 null,
                 raw.processCode(),
@@ -306,8 +381,8 @@ class ManufacturingKafkaConsumerTest {
         return new ManufacturingAnalysisEvent(
                 "ANL-CRITICAL",
                 raw.eventId(),
-                raw.eventTime(),
-                raw.eventTime(),
+                offset(raw.eventTime()),
+                offset(raw.eventTime()),
                 null,
                 null,
                 raw.processCode(),
@@ -335,6 +410,10 @@ class ManufacturingKafkaConsumerTest {
 
     private KafkaPublishResult publishResult() {
         return new KafkaPublishResult("topic", 0, 0L, "key", "EVT-1");
+    }
+
+    private OffsetDateTime offset(LocalDateTime dateTime) {
+        return dateTime == null ? null : dateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
     private void createTables(JdbcTemplate jdbc) {
