@@ -693,7 +693,7 @@ public class BodyAnomalyDetectionService {
             BodyAnalysisResult summaryResult
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return BodyAnomalyDetectionResponseMapper.toAlert(false, "차체 이상이 감지되지 않았습니다", List.of());
+            return BodyAnomalyDetectionResponseMapper.toAlert(false, "차체 이상 탐지 미검출", List.of());
         }
 
         List<String> reasons = new ArrayList<>();
