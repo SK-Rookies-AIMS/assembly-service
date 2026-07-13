@@ -18,6 +18,9 @@ public record PressAnomalyDetectionResponse(
         List<ChartPoint> chart,
         AlertPanel alert
 ) {
+    public static final double WARNING_CYCLE_GAP_SEC = 2.0;
+    public static final double DANGER_CYCLE_GAP_SEC = 3.0;
+
     public record DateOption(
             LocalDate date,
             String sampleEventId
@@ -28,6 +31,8 @@ public record PressAnomalyDetectionResponse(
             Double targetCycleTimeSec,
             Double actualCycleTimeSec,
             Double cycleTimeGapSec,
+            Double warningCycleTimeGapSec,
+            Double dangerCycleTimeGapSec,
             Double riskScore,
             String riskScoreScale,
             String severity
@@ -64,7 +69,9 @@ public record PressAnomalyDetectionResponse(
             Double actualCycleTimeSec,
             Boolean countIncreaseYn,
             Boolean isAbnormal,
-            String severity
+            String severity,
+            Double warningCycleTimeGapSec,
+            Double dangerCycleTimeGapSec
     ) {
     }
 
@@ -75,7 +82,9 @@ public record PressAnomalyDetectionResponse(
             Double cycleTimeGapSec,
             Boolean countIncreaseYn,
             Boolean isAbnormal,
-            String severity
+            String severity,
+            Double warningCycleTimeGapSec,
+            Double dangerCycleTimeGapSec
     ) {
     }
 
@@ -89,7 +98,9 @@ public record PressAnomalyDetectionResponse(
             Double riskScore,
             Boolean countIncreaseYn,
             Boolean isAbnormal,
-            String severity
+            String severity,
+            Double warningCycleTimeGapSec,
+            Double dangerCycleTimeGapSec
     ) {
         public static ChartPoint from(PressAnalysisResult result) {
             return from(result, result.getAnalysisResult().getEventTime());
@@ -110,7 +121,9 @@ public record PressAnomalyDetectionResponse(
                     score,
                     result.getCountIncreaseYn(),
                     isAbnormal,
-                    severity
+                    severity,
+                    WARNING_CYCLE_GAP_SEC,
+                    DANGER_CYCLE_GAP_SEC
             );
         }
     }
@@ -124,12 +137,23 @@ public record PressAnomalyDetectionResponse(
 
     public static Metrics metricsFrom(ChartPoint point) {
         if (point == null) {
-            return new Metrics(null, null, null, null, "0-100", Severity.NORMAL.name());
+            return new Metrics(
+                    null,
+                    null,
+                    null,
+                    WARNING_CYCLE_GAP_SEC,
+                    DANGER_CYCLE_GAP_SEC,
+                    null,
+                    "0-100",
+                    Severity.NORMAL.name()
+            );
         }
         return new Metrics(
                 point.targetCycleTimeSec(),
                 point.actualCycleTimeSec(),
                 point.cycleTimeGapSec(),
+                point.warningCycleTimeGapSec(),
+                point.dangerCycleTimeGapSec(),
                 point.riskScore(),
                 "0-100",
                 point.severity() == null ? Severity.NORMAL.name() : point.severity()
@@ -181,7 +205,9 @@ public record PressAnomalyDetectionResponse(
                 point.actualCycleTimeSec(),
                 point.countIncreaseYn(),
                 point.isAbnormal(),
-                point.severity()
+                point.severity(),
+                point.warningCycleTimeGapSec(),
+                point.dangerCycleTimeGapSec()
         );
     }
 
@@ -193,7 +219,9 @@ public record PressAnomalyDetectionResponse(
                 point.cycleTimeGapSec(),
                 point.countIncreaseYn(),
                 point.isAbnormal(),
-                point.severity()
+                point.severity(),
+                point.warningCycleTimeGapSec(),
+                point.dangerCycleTimeGapSec()
         );
     }
 }
