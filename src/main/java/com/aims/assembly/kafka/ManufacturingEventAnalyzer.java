@@ -226,8 +226,7 @@ public class ManufacturingEventAnalyzer {
 
     public EquipmentStatusEvent toEquipmentStatusEvent(ManufacturingRawEvent event) {
         String operationStatus = equipmentOperationStatus(event);
-        String riskLevel = "FAULT".equals(operationStatus) || "STOPPED".equals(operationStatus) ? "CRITICAL"
-                : ("WARNING".equals(operationStatus) ? "WARNING" : "LOW");
+        String riskLevel = equipmentRiskLevel(operationStatus);
         return new EquipmentStatusEvent(
                 "EQEVT-" + UUID.randomUUID(),
                 event.eventId(),
@@ -250,6 +249,7 @@ public class ManufacturingEventAnalyzer {
 
     public ManufacturingAlertEvent toAlertEvent(ManufacturingAnalysisEvent analysis) {
         // WARNING 또는 CRITICAL 분석 결과(processRisk 기반)를 OPEN 상태의 알림으로 변환
+        String alertType = ManufacturingAlertEvent.TYPE_MANUFACTURING_ABNORMAL;
         return new ManufacturingAlertEvent(
                 "ALT-" + UUID.randomUUID(),
                 analysis.eventId(),
@@ -262,7 +262,7 @@ public class ManufacturingEventAnalyzer {
                 analysis.equipmentName(),
                 analysis.carMasterId(),
                 null,       // equipmentId: analysis 이벤트에 없음 - null 허용
-                "MANUFACTURING_ABNORMAL",
+                alertType,
                 alertTitle(analysis),
                 analysis.equipmentCode() + " 설비의 제조 공정 위험이 감지되었습니다. (processRisk 기반)",
                 analysis.riskLevel(),
@@ -270,7 +270,12 @@ public class ManufacturingEventAnalyzer {
                 "OPEN",
                 true,
                 analysis.reason().detailReasons(),
-                analysis.recommendation().message()
+                analysis.recommendation().message(),
+                AlertImageUrlResolver.resolve(
+                        analysis.processCode(),
+                        alertType,
+                        analysis.riskLevel()
+                )
         );
     }
 
@@ -280,6 +285,9 @@ public class ManufacturingEventAnalyzer {
      */
     public ManufacturingAlertEvent toEquipmentStatusAlert(ManufacturingRawEvent event) {
         String statusReason = buildEquipmentStatusReason(event, true);
+        String operationStatus = equipmentOperationStatus(event);
+        String riskLevel = equipmentRiskLevel(operationStatus);
+        String alertType = ManufacturingAlertEvent.TYPE_EQUIPMENT_ABNORMAL;
         return new ManufacturingAlertEvent(
                 "ALT-" + UUID.randomUUID(),
                 event.eventId(),
@@ -292,16 +300,27 @@ public class ManufacturingEventAnalyzer {
                 text(event.eventJson(), "equipment", "equipmentName"),
                 event.carMasterId(),
                 event.equipmentId(),
-                "EQUIPMENT_ABNORMAL",
+                alertType,
                 "설비 이상 감지",
                 event.equipmentCode() + " 설비 이상 상태가 감지되었습니다. " + statusReason,
-                "CRITICAL",
-                100.0,
+                riskLevel,
+                "CRITICAL".equals(riskLevel) ? 100.0 : 60.0,
                 "OPEN",
                 true,
                 List.of(statusReason),
-                "설비 상태를 즉시 확인하고 안전 절차를 따르세요."
+                "설비 상태를 즉시 확인하고 안전 절차를 따르세요.",
+                AlertImageUrlResolver.resolve(
+                        event.processCode(),
+                        alertType,
+                        riskLevel
+                )
         );
+    }
+
+    private String equipmentRiskLevel(String operationStatus) {
+        return "FAULT".equals(operationStatus) || "STOPPED".equals(operationStatus)
+                ? "CRITICAL"
+                : ("WARNING".equals(operationStatus) ? "WARNING" : "LOW");
     }
 
     /**
