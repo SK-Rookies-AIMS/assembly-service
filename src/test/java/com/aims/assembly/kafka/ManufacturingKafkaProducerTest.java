@@ -3,6 +3,7 @@ package com.aims.assembly.kafka;
 import com.aims.assembly.common.status.KafkaErrorStatus;
 import com.aims.assembly.exception.KafkaException;
 import com.aims.assembly.kafka.model.KafkaPublishResult;
+import com.aims.assembly.kafka.model.ManufacturingAlertEvent;
 import com.aims.assembly.kafka.model.ManufacturingAnalysisEvent;
 import com.aims.assembly.kafka.model.ManufacturingRawEvent;
 import com.aims.assembly.properties.KafkaCustomProperties;
@@ -22,6 +23,7 @@ import org.springframework.kafka.support.SendResult;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -29,6 +31,8 @@ import java.util.concurrent.CompletionException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
@@ -55,6 +59,57 @@ class ManufacturingKafkaProducerTest {
 
     @Mock
     private KafkaMessageTraceStore traceStore;
+
+    @Test
+    void publishesAlertEvenWhenImageMappingIsMissing() {
+        ManufacturingKafkaProducer producer = new ManufacturingKafkaProducer(
+                kafkaTemplate,
+                new ObjectMapper(),
+                new KafkaCustomProperties(),
+                traceStore
+        );
+        ManufacturingAlertEvent event = new ManufacturingAlertEvent(
+                "ALT-NO-IMAGE",
+                "EVT-NO-IMAGE",
+                "ANL-NO-IMAGE",
+                LocalDateTime.of(2026, 7, 13, 10, 0),
+                null,
+                null,
+                ProcessCode.PRESS,
+                "PRESS-1",
+                null,
+                1L,
+                null,
+                ManufacturingAlertEvent.TYPE_MANUFACTURING_ABNORMAL,
+                "title",
+                "message",
+                "LOW",
+                20.0,
+                "OPEN",
+                true,
+                List.of("reason"),
+                "check",
+                null
+        );
+        when(kafkaTemplate.send(
+                eq("factory.manufacturing.alert"),
+                eq("ALT-NO-IMAGE"),
+                anyString()
+        )).thenReturn(CompletableFuture.completedFuture(sendResult));
+        when(sendResult.getRecordMetadata()).thenReturn(recordMetadata);
+        when(recordMetadata.topic()).thenReturn("factory.manufacturing.alert");
+
+        KafkaPublishResult result = producer.sendAlert(event).join();
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(kafkaTemplate).send(
+                eq("factory.manufacturing.alert"),
+                eq("ALT-NO-IMAGE"),
+                payloadCaptor.capture()
+        );
+        assertThat(payloadCaptor.getValue()).contains("\"imageUrl\":null");
+        assertThat(result.topic()).isEqualTo("factory.manufacturing.alert");
+    }
 
     @Test
     @DisplayName("불량 전이 분석은 carId를 message key로 사용")

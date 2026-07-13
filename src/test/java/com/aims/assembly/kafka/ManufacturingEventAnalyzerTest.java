@@ -457,8 +457,47 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingAlertEvent alert = analyzer.toEquipmentStatusAlert(raw);
             assertThat(alert.alertType()).isEqualTo("EQUIPMENT_ABNORMAL");
             assertThat(alert.riskLevel()).isEqualTo("CRITICAL");
+            assertThat(alert.imageUrl()).isEqualTo(
+                    "s3://event-image-858507113889-ap-northeast-2-an/press_1.png"
+            );
             assertThat(analyzer.toEquipmentStatusEvent(raw).operationStatus()).isEqualTo("FAULT");
             assertThat(analyzer.toEquipmentStatusEvent(raw).riskLevel()).isEqualTo("CRITICAL");
+        }
+
+        @Test
+        void equipmentWarningUsesWarningImageWithoutChangingAlertCondition() {
+            ManufacturingRawEvent raw = rawWithEquipmentStatus(ProcessCode.BODY, "WARNING");
+
+            assertThat(analyzer.isEquipmentAbnormal(raw)).isTrue();
+            ManufacturingAlertEvent alert = analyzer.toEquipmentStatusAlert(raw);
+
+            assertThat(alert.riskLevel()).isEqualTo("WARNING");
+            assertThat(alert.riskScore()).isEqualTo(60.0);
+            assertThat(alert.imageUrl()).isEqualTo(
+                    "s3://event-image-858507113889-ap-northeast-2-an/body_3.png"
+            );
+        }
+
+        @Test
+        void processCriticalUsesProcessCriticalImage() {
+            ManufacturingRawEvent raw = raw(ProcessCode.PRESS, Map.of(
+                    "processMetrics", Map.of(
+                            "cycleTimeSec", 75.0,
+                            "stationDelaySec", 40.0
+                    ),
+                    "processData", Map.of("press", Map.of(
+                            "targetCycleTimeSec", 40.0,
+                            "countIncreaseYn", false
+                    ))
+            ));
+
+            ManufacturingAnalysisEvent analysis = analyzer.analyze(raw);
+            ManufacturingAlertEvent alert = analyzer.toAlertEvent(analysis);
+
+            assertThat(analysis.riskLevel()).isEqualTo("CRITICAL");
+            assertThat(alert.imageUrl()).isEqualTo(
+                    "s3://event-image-858507113889-ap-northeast-2-an/press_2.png"
+            );
         }
 
         @Test

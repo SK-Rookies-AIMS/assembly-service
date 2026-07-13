@@ -197,7 +197,8 @@ class ManufacturingKafkaConsumerTest {
                 "ALT-1", raw.eventId(), null, raw.eventTime(), null, null, raw.processCode(),
                 raw.equipmentCode(), null, raw.carMasterId(), raw.equipmentId(),
                 "EQUIPMENT_ABNORMAL", "title", "message", "CRITICAL", 100.0,
-                "OPEN", true, List.of("error"), "check"
+                "OPEN", true, List.of("error"), "check",
+                "s3://event-image-858507113889-ap-northeast-2-an/press_1.png"
         );
         when(parser.parse("raw-json")).thenReturn(raw);
         when(analyzer.isEquipmentAbnormal(raw)).thenReturn(true);

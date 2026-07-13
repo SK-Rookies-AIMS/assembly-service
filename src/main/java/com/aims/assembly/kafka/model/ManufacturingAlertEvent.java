@@ -10,8 +10,8 @@ import java.util.List;
  *
  * <p>alertType 구분:
  * <ul>
- *   <li>{@code PROCESS_RISK} - 제조 공정 분석 결과 riskScore(processRisk) >= 60</li>
- *   <li>{@code EQUIPMENT_STATUS} - 설비 상태값(WARNING/STOPPED/FAULT) 이상 감지</li>
+ *   <li>{@code MANUFACTURING_ABNORMAL} - 제조 공정 분석 결과 알람</li>
+ *   <li>{@code EQUIPMENT_ABNORMAL} - 설비 상태값(WARNING/STOPPED/FAULT) 이상 알람</li>
  * </ul>
  * alert topic message key 는 {@code alertId} 를 사용한다.
  */
@@ -35,6 +35,9 @@ public record ManufacturingAlertEvent(
         String alertStatus,
         boolean needAction,
         List<String> reason,
-        String recommendedAction
+        String recommendedAction,
+        String imageUrl
 ) {
+    public static final String TYPE_MANUFACTURING_ABNORMAL = "MANUFACTURING_ABNORMAL";
+    public static final String TYPE_EQUIPMENT_ABNORMAL = "EQUIPMENT_ABNORMAL";
 }
