@@ -11,8 +11,12 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.UUID;
 
 /**
@@ -31,6 +35,12 @@ import java.util.UUID;
  */
 @Component
 public class ManufacturingEventAnalyzer {
+    // ISO 7870/22400 원칙을 그대로 숫자로 고정하지 않고, 공정별 정상 데이터 기준으로 NORMAL/WARNING/DANGER를 나눈다.
+    private static final double PRESS_TARGET_CYCLE_TIME_SEC = 40.0;
+    private static final double PRESS_NORMAL_CYCLE_DELTA_SEC = 2.0;
+    private static final double PRESS_WARNING_CYCLE_DELTA_SEC = 3.0;
+    // ISO 13373/20816의 진동 구간 해석을 참고해, 차체 주파수 밴드를 LOW/MID/HIGH 기준으로 분리한다.
+    private static final Pattern BODY_BAND_PATTERN = Pattern.compile("freq_(\\d+)_(\\d+)_hz", Pattern.CASE_INSENSITIVE);
 
     public ManufacturingAnalysisEvent analyze(ManufacturingRawEvent event) {
         return analyze(event, "PROCESS_RISK_ANALYSIS");
@@ -54,21 +64,32 @@ public class ManufacturingEventAnalyzer {
 
         ProcessComponent processComponent = processComponent(event, cycleTimeSec, stationDelaySec);
         double processRiskScore = round(clamp(processComponent.score()));
+        SignalSeverity processSignalSeverity = processComponent.severity();
 
         // equipmentFault: 상태값 기반 판단만 수행 (수치 계산식 제거)
         boolean equipmentFault = isEquipmentAbnormalStatus(event);
         boolean sequenceError = event.processCode() == ProcessCode.ASSEMBLY
                 && number(event.eventJson(), "processData", "assembly", "sequenceErrorCount") > 0;
 
-        boolean isAbnormal = processRiskScore >= 60 || equipmentFault || sequenceError;
-        String abnormalType = abnormalType(processRiskScore, equipmentFault, sequenceError);
+        boolean isAbnormal = processRiskScore >= 60
+                || processSignalSeverity != SignalSeverity.NORMAL
+                || equipmentFault
+                || sequenceError;
+        String abnormalType = abnormalType(processRiskScore, processSignalSeverity, equipmentFault, sequenceError);
         String equipmentStatusReason = buildEquipmentStatusReason(event, equipmentFault);
-        String message = mainReason(event.processCode(), processRiskScore, equipmentFault, sequenceError, "PROCESS_RISK_ANALYSIS");
+        String message = mainReason(
+                event.processCode(),
+                processRiskScore,
+                processSignalSeverity,
+                equipmentFault,
+                sequenceError,
+                "PROCESS_RISK_ANALYSIS"
+        );
 
         return new AnalysisDetail(
                 "0-100",
                 processRiskScore,
-                riskLevel(processRiskScore),
+                riskLevel(processRiskScore, processSignalSeverity),
                 isAbnormal,
                 abnormalType,
                 "riskScore = processRisk",
@@ -79,7 +100,7 @@ public class ManufacturingEventAnalyzer {
                 ),
                 equipmentFault,
                 equipmentStatusReason,
-                decisionReason(processRiskScore, equipmentFault, sequenceError),
+                decisionReason(processRiskScore, processSignalSeverity, equipmentFault, sequenceError),
                 message
         );
     }
@@ -134,9 +155,11 @@ public class ManufacturingEventAnalyzer {
         );
 
         // PRESS/BODY/PAINT/ASSEMBLY별 전용 위험도 계산
+        ProcessComponent processComponent = processComponent(event, cycleTimeSec, stationDelaySec);
         double processRisk = calculateProcessRisk(event, cycleTimeSec, stationDelaySec);
         ManufacturingAnalysisEvent.ProcessRisk processRiskScores =
                 processRiskScores(event.processCode(), processRisk);
+        SignalSeverity processSignalSeverity = processComponent.severity();
 
         // riskScore = processRisk (단독). bottleneck/defect/equipment 는 최종 score에 미포함
         double overallRisk = switch (analysisType) {
@@ -145,7 +168,7 @@ public class ManufacturingEventAnalyzer {
             default -> clamp(processRisk);
         };
         overallRisk = round(overallRisk);
-        String riskLevel = riskLevel(overallRisk);
+        String riskLevel = riskLevel(overallRisk, processSignalSeverity);
 
         boolean bottleneck = bottleneckRisk >= 60;
         boolean qualityDefect = isQualityDefect(event, defectTransferRisk);
@@ -188,14 +211,18 @@ public class ManufacturingEventAnalyzer {
                 new ManufacturingAnalysisEvent.AnalysisResult(
                         "BOTTLENECK_ANALYSIS".equals(analysisType) || "DEFECT_TRANSFER_PREDICTION".equals(analysisType)
                                 ? overallRisk >= 60 || bottleneck || qualityDefect || equipmentFault || sequenceError
-                                : overallRisk >= 60 || equipmentFault || sequenceError,
+                                : overallRisk >= 60
+                                || processSignalSeverity != SignalSeverity.NORMAL
+                                || qualityDefect
+                                || equipmentFault
+                                || sequenceError,
                         bottleneck,
                         qualityDefect,
                         equipmentFault,
                         sequenceError
                 ),
                 new ManufacturingAnalysisEvent.Reason(
-                        mainReason(event.processCode(), overallRisk, equipmentFault, sequenceError, analysisType),
+                        mainReason(event.processCode(), overallRisk, processSignalSeverity, equipmentFault, sequenceError, analysisType),
                         detailReasons
                 ),
                 new ManufacturingAnalysisEvent.Recommendation(
@@ -364,7 +391,8 @@ public class ManufacturingEventAnalyzer {
     ) {
         return switch (event.processCode()) {
             case PRESS -> {
-                boolean countIncrease = bool(
+                // 프레스는 사이클 편차, 카운트 증가 여부, 설비 상태를 함께 봐서 ISO식 관리구간으로 판정한다.
+                Boolean countIncrease = boolObj(
                         event.eventJson(),
                         "processData",
                         "press",
@@ -372,29 +400,38 @@ public class ManufacturingEventAnalyzer {
                 );
                 double rmsAmpere = number(event.eventJson(), "sensor", "current", "rmsAmpere");
                 double targetCycleTimeSec = targetCycleTime(event);
-                double cycleOverTargetSec = Math.max(0, cycleTimeSec - targetCycleTimeSec);
-                
+                double cycleDeltaSec = Math.abs(cycleTimeSec - targetCycleTimeSec);
+                SignalSeverity cycleSeverity = pressCycleSeverity(cycleDeltaSec);
+                SignalSeverity countSeverity = pressCountSeverity(countIncrease);
+                SignalSeverity equipmentSeverity = pressEquipmentSeverity(event);
+                SignalSeverity signalSeverity = SignalSeverity.max(cycleSeverity, countSeverity, equipmentSeverity);
+
                 double score = clamp(
                         Math.min(40.0, stationDelaySec * 1.0)
-                        + Math.min(35.0, cycleOverTargetSec * 1.0)
+                        + Math.min(35.0, Math.max(0.0, cycleTimeSec - targetCycleTimeSec) * 1.0)
                         + Math.min(20.0, Math.max(0.0, rmsAmpere - 1.5) * 5.0)
-                        + (countIncrease ? 0.0 : 20.0)
+                        + (Boolean.FALSE.equals(countIncrease) ? 20.0 : 0.0)
                 );
+                Map<String, Object> usedFields = new LinkedHashMap<>();
+                usedFields.put("processCode", event.processCode().name());
+                usedFields.put("stationDelaySec", stationDelaySec);
+                usedFields.put("cycleTimeSec", cycleTimeSec);
+                usedFields.put("targetCycleTimeSec", targetCycleTimeSec);
+                usedFields.put("cycleDeltaSec", cycleDeltaSec);
+                usedFields.put("rmsAmpere", rmsAmpere);
+                usedFields.put("countIncreaseYn", countIncrease);
+                usedFields.put("cycleSeverity", cycleSeverity.name());
+                usedFields.put("countSeverity", countSeverity.name());
+                usedFields.put("equipmentSeverity", equipmentSeverity.name());
                 yield new ProcessComponent(
                         score,
-                        Map.of(
-                                "processCode", event.processCode().name(),
-                                "stationDelaySec", stationDelaySec,
-                                "cycleTimeSec", cycleTimeSec,
-                                "targetCycleTimeSec", targetCycleTimeSec,
-                                "cycleOverTargetSec", cycleOverTargetSec,
-                                "rmsAmpere", rmsAmpere,
-                                "countIncreaseYn", countIncrease
-                        ),
-                        "min(40, stationDelaySec * 1) + min(35, max(0, cycleTimeSec - targetCycleTimeSec) * 1) + min(20, max(0, rmsAmpere - 1.5) * 5) + (countIncreaseYn ? 0 : 20)"
+                        usedFields,
+                        "min(40, stationDelaySec * 1) + min(35, max(0, cycleTimeSec - targetCycleTimeSec) * 1) + min(20, max(0, rmsAmpere - 1.5) * 5) + (countIncreaseYn ? 0 : 20)",
+                        signalSeverity
                 );
             }
             case BODY -> {
+                // 차체는 로봇 진동 점수 + 상태 + 주파수 밴드별 임계값을 합쳐 경고/위험을 구분한다.
                 double robotScore = number(
                         event.eventJson(),
                         "sensor",
@@ -412,38 +449,47 @@ public class ManufacturingEventAnalyzer {
                 String frequencyPeakBand = text(event.eventJson(), "processData", "body", "frequencyPeakBand");
                 Object frequencyBandsObj = value(event.eventJson(), "processData", "body", "frequencyBands");
                 var frequencyBands = com.aims.assembly.service.body.BodyFrequencyBandSupport.toDoubleMap(frequencyBandsObj);
+                Map<String, Double> summaryBands = com.aims.assembly.service.body.BodyFrequencyBandSupport.toSummaryBands(frequencyBands);
+                Map<String, Double> thresholdBands = summaryBands != null && !summaryBands.isEmpty()
+                        ? summaryBands
+                        : frequencyBands;
                 Double peakBandValue = com.aims.assembly.service.body.BodyFrequencyBandSupport.resolvePeakValue(
                         frequencyPeakBand,
-                        frequencyBands,
+                        thresholdBands,
                         vibrationPeak > 0 ? vibrationPeak : null
                 );
                 double peakValue = peakBandValue != null ? peakBandValue : 0.0;
 
-                boolean isMotionAbnormal = robotMotionStatus != null
-                        && ("ABNORMAL".equalsIgnoreCase(robotMotionStatus)
-                        || "COLLISION_RISK".equalsIgnoreCase(robotMotionStatus));
-                boolean isOperationAbnormal = robotOperationMode != null
-                        && ("AUTO_MANUAL_STOPPED".equalsIgnoreCase(robotOperationMode)
-                        || "STOPPED".equalsIgnoreCase(robotOperationMode)
-                        || "MANUAL".equalsIgnoreCase(robotOperationMode));
+                SignalSeverity motionSeverity = bodyMotionSeverity(robotMotionStatus);
+                SignalSeverity operationSeverity = bodyOperationSeverity(robotOperationMode);
+                SignalSeverity frequencySeverity = bodyFrequencySeverity(
+                        frequencyPeakBand,
+                        thresholdBands,
+                        peakValue
+                );
+                SignalSeverity signalSeverity = SignalSeverity.max(motionSeverity, operationSeverity, frequencySeverity);
 
                 double score = clamp(
                         Math.min(50.0, robotScore * 40.0)
                         + Math.min(30.0, peakValue * 1000.0)
-                        + (isMotionAbnormal ? 30.0 : 0.0)
-                        + (isOperationAbnormal ? 20.0 : 0.0)
+                        + (motionSeverity == SignalSeverity.DANGER ? 30.0 : (motionSeverity == SignalSeverity.WARNING ? 15.0 : 0.0))
+                        + (operationSeverity == SignalSeverity.DANGER ? 20.0 : (operationSeverity == SignalSeverity.WARNING ? 10.0 : 0.0))
                 );
+                Map<String, Object> usedFields = new LinkedHashMap<>();
+                usedFields.put("processCode", event.processCode().name());
+                usedFields.put("robotVibrationScore", robotScore);
+                usedFields.put("frequencyPeakValue", peakValue);
+                usedFields.put("robotMotionStatus", String.valueOf(robotMotionStatus));
+                usedFields.put("robotOperationMode", String.valueOf(robotOperationMode));
+                usedFields.put("frequencyPeakBand", String.valueOf(frequencyPeakBand));
+                usedFields.put("motionSeverity", motionSeverity.name());
+                usedFields.put("operationSeverity", operationSeverity.name());
+                usedFields.put("frequencySeverity", frequencySeverity.name());
                 yield new ProcessComponent(
                         score,
-                        Map.of(
-                                "processCode", event.processCode().name(),
-                                "robotVibrationScore", robotScore,
-                                "frequencyPeakValue", peakValue,
-                                "robotMotionStatus", String.valueOf(robotMotionStatus),
-                                "robotOperationMode", String.valueOf(robotOperationMode),
-                                "frequencyPeakBand", String.valueOf(frequencyPeakBand)
-                        ),
-                        "min(50, robotVibrationScore * 40) + min(30, frequencyPeakValue * 1000) + motion/operation penalties"
+                        usedFields,
+                        "min(50, robotVibrationScore * 40) + min(30, frequencyPeakValue * 1000) + motion/operation penalties",
+                        signalSeverity
                 );
             }
             case PAINT -> {
@@ -468,7 +514,8 @@ public class ManufacturingEventAnalyzer {
                                 "surfaceQualityScore", surfaceQuality,
                                 "visionLabel", String.valueOf(text(event.eventJson(), "processData", "paint", "visionLabel"))
                         ),
-                        "min(45, defectScore * 35) + min(25, thermalStdTemp * 3) + min(30, max(0, 90 - surfaceQualityScore))"
+                        "min(45, defectScore * 35) + min(25, thermalStdTemp * 3) + min(30, max(0, 90 - surfaceQualityScore))",
+                        SignalSeverity.NORMAL
                 );
             }
             case ASSEMBLY -> {
@@ -503,7 +550,8 @@ public class ManufacturingEventAnalyzer {
                                 "missingPartCount", missingParts,
                                 "fasteningErrorCount", fasteningErrors
                         ),
-                        "min(45, sequenceErrorCount * 4) + min(35, missingPartCount * 3) + min(20, fasteningErrorCount * 2)"
+                        "min(45, sequenceErrorCount * 4) + min(35, missingPartCount * 3) + min(20, fasteningErrorCount * 2)",
+                        SignalSeverity.NORMAL
                 );
             }
         };
@@ -607,6 +655,7 @@ public class ManufacturingEventAnalyzer {
     private String mainReason(
             ProcessCode processCode,
             double overallRisk,
+            SignalSeverity processSignalSeverity,
             boolean equipmentFault,
             boolean sequenceError,
             String analysisType
@@ -616,6 +665,14 @@ public class ManufacturingEventAnalyzer {
         }
         if (sequenceError) {
             return "의장 공정의 작업 순서 오류가 감지되었습니다.";
+        }
+        if (processSignalSeverity != SignalSeverity.NORMAL && overallRisk < 60) {
+            return switch (processCode) {
+                case PRESS -> "?꾨젅???쒖멸뿉?꽌 ?댁긽 ?곹깭媛 媛먯??섏뿀?듬땲??";
+                case BODY -> "李⑥껜 ?쒖멸뿉?꽌 ?댁긽 ?곹깭媛 媛먯??섏뿀?듬땲??";
+                case PAINT -> "?꾩옣 ?쒖멸뿉?꽌 ?댁긽 ?곹깭媛 媛먯??섏뿀?듬땲??";
+                case ASSEMBLY -> "?섏옣 ?쒖멸뿉?꽌 ?댁긽 ?곹깭媛 媛먯??섏뿀?듬땲??";
+            };
         }
         if (!"BOTTLENECK_ANALYSIS".equals(analysisType) && !"DEFECT_TRANSFER_PREDICTION".equals(analysisType)) {
             if (overallRisk >= 80) {
@@ -647,14 +704,16 @@ public class ManufacturingEventAnalyzer {
         };
     }
 
-    private String abnormalType(double processRiskScore, boolean equipmentFault, boolean sequenceError) {
+    private String abnormalType(double processRiskScore, SignalSeverity processSignalSeverity, boolean equipmentFault, boolean sequenceError) {
         if (equipmentFault) return "EQUIPMENT";
-        if (sequenceError || processRiskScore >= 60) return "PROCESS";
+        if (sequenceError || processRiskScore >= 60 || processSignalSeverity != SignalSeverity.NORMAL) return "PROCESS";
         return null;
     }
 
-    private String decisionReason(double processRiskScore, boolean equipmentFault, boolean sequenceError) {
+    private String decisionReason(double processRiskScore, SignalSeverity processSignalSeverity, boolean equipmentFault, boolean sequenceError) {
         if (processRiskScore >= 60) return "processRisk >= 60 (riskScore = processRisk)";
+        if (processSignalSeverity == SignalSeverity.DANGER) return "process signal indicates danger";
+        if (processSignalSeverity == SignalSeverity.WARNING) return "process signal indicates warning";
         if (equipmentFault) return "Equipment status is WARNING/STOPPED/FAULT";
         if (sequenceError) return "ASSEMBLY sequenceErrorCount > 0";
         return "processRisk < 60 and no abnormal detail flag";
@@ -707,8 +766,44 @@ public class ManufacturingEventAnalyzer {
         return "LOW";
     }
 
+    private String riskLevel(double score, SignalSeverity severity) {
+        return maxRiskLevel(riskLevel(score), severity);
+    }
+
+    private String maxRiskLevel(String left, SignalSeverity severity) {
+        String right = severity == null ? "LOW" : switch (severity) {
+            case NORMAL -> "LOW";
+            case WARNING -> "WARNING";
+            case DANGER -> "CRITICAL";
+        };
+        return maxRiskLevel(left, right);
+    }
+
+    private String maxRiskLevel(String left, String right) {
+        return rankRiskLevel(left) >= rankRiskLevel(right) ? normalizeRiskLevel(left) : normalizeRiskLevel(right);
+    }
+
+    private int rankRiskLevel(String level) {
+        return switch (normalizeRiskLevel(level)) {
+            case "CRITICAL" -> 3;
+            case "WARNING" -> 2;
+            default -> 1;
+        };
+    }
+
+    private String normalizeRiskLevel(String level) {
+        if (level == null) {
+            return "LOW";
+        }
+        return switch (level.toUpperCase(Locale.ROOT)) {
+            case "CRITICAL", "DANGER" -> "CRITICAL";
+            case "WARNING" -> "WARNING";
+            default -> "LOW";
+        };
+    }
+
     private double clamp(double score) {
-        return Math.max(0.0, Math.min(99.0, score));
+        return Math.max(0.0, Math.min(100.0, score));
     }
 
     private double round(double score) {
@@ -729,6 +824,23 @@ public class ManufacturingEventAnalyzer {
             return n.intValue() == 1;
         }
         return value instanceof Boolean bool && bool;
+    }
+
+    private Boolean boolObj(Map<String, Object> source, String... path) {
+        Object value = value(source, path);
+        if (value instanceof String s) {
+            if ("Y".equalsIgnoreCase(s) || "true".equalsIgnoreCase(s)) {
+                return true;
+            }
+            if ("N".equalsIgnoreCase(s) || "false".equalsIgnoreCase(s)) {
+                return false;
+            }
+            return null;
+        }
+        if (value instanceof Number n) {
+            return n.intValue() == 1;
+        }
+        return value instanceof Boolean bool ? bool : null;
     }
 
     private String text(Map<String, Object> source, String... path) {
@@ -780,7 +892,170 @@ public class ManufacturingEventAnalyzer {
     private record ProcessComponent(
             double score,
             Map<String, Object> usedFields,
-            String formula
+            String formula,
+            SignalSeverity severity
     ) {
+    }
+
+    private SignalSeverity pressCycleSeverity(double cycleDeltaSec) {
+        // ISO의 관리도 개념처럼 기준값 ±2σ를 정상, ±3σ를 경고/위험으로 해석하는 구간 판정.
+        if (cycleDeltaSec > PRESS_WARNING_CYCLE_DELTA_SEC) {
+            return SignalSeverity.DANGER;
+        }
+        if (cycleDeltaSec > PRESS_NORMAL_CYCLE_DELTA_SEC) {
+            return SignalSeverity.WARNING;
+        }
+        return SignalSeverity.NORMAL;
+    }
+
+    private SignalSeverity pressCountSeverity(Boolean countIncrease) {
+        if (countIncrease == null) {
+            return SignalSeverity.WARNING;
+        }
+        return Boolean.FALSE.equals(countIncrease) ? SignalSeverity.DANGER : SignalSeverity.NORMAL;
+    }
+
+    private SignalSeverity pressEquipmentSeverity(ManufacturingRawEvent event) {
+        String status = event.equipmentStatus();
+        if (status == null || status.isBlank()) {
+            status = text(event.eventJson(), "equipmentStatus", "operationStatus");
+        }
+        return equipmentSeverity(status);
+    }
+
+    private SignalSeverity bodyMotionSeverity(String motionStatus) {
+        if (motionStatus == null || motionStatus.isBlank()) {
+            return SignalSeverity.WARNING;
+        }
+        return switch (motionStatus.trim().toUpperCase(Locale.ROOT)) {
+            case "NORMAL" -> SignalSeverity.NORMAL;
+            case "WARNING", "UNKNOWN" -> SignalSeverity.WARNING;
+            case "ABNORMAL", "COLLISION_RISK" -> SignalSeverity.DANGER;
+            default -> SignalSeverity.WARNING;
+        };
+    }
+
+    private SignalSeverity bodyOperationSeverity(String operationMode) {
+        if (operationMode == null || operationMode.isBlank()) {
+            return SignalSeverity.WARNING;
+        }
+        return switch (operationMode.trim().toUpperCase(Locale.ROOT)) {
+            case "AUTO" -> SignalSeverity.NORMAL;
+            case "MANUAL", "STOPPED", "AUTO_MANUAL_STOPPED" -> SignalSeverity.WARNING;
+            default -> SignalSeverity.WARNING;
+        };
+    }
+
+    private SignalSeverity bodyFrequencySeverity(
+            String frequencyPeakBand,
+            Map<String, Double> frequencyBands,
+            double peakValue
+    ) {
+        // ISO 13373/20816의 밴드별 관리 원칙을 따라 LOW/MID/HIGH 임계값을 다르게 적용한다.
+        if (peakValue <= 0.0) {
+            return SignalSeverity.NORMAL;
+        }
+        FrequencyThreshold threshold = frequencyThreshold(
+                resolveFrequencyThresholdBand(frequencyPeakBand, frequencyBands, peakValue)
+        );
+        if (peakValue >= threshold.danger()) {
+            return SignalSeverity.DANGER;
+        }
+        if (peakValue >= threshold.warning()) {
+            return SignalSeverity.WARNING;
+        }
+        return SignalSeverity.NORMAL;
+    }
+
+    private String resolveFrequencyThresholdBand(
+            String frequencyPeakBand,
+            Map<String, Double> frequencyBands,
+            double peakValue
+    ) {
+        if (frequencyPeakBand != null && !frequencyPeakBand.isBlank()) {
+            return frequencyPeakBand;
+        }
+        if (frequencyBands == null || frequencyBands.isEmpty()) {
+            return null;
+        }
+        String bestBand = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Map.Entry<String, Double> entry : frequencyBands.entrySet()) {
+            Double value = entry.getValue();
+            if (value == null) {
+                continue;
+            }
+            double distance = Math.abs(value - peakValue);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestBand = entry.getKey();
+            }
+        }
+        return bestBand;
+    }
+
+    private FrequencyThreshold frequencyThreshold(String band) {
+        if (band == null || band.isBlank()) {
+            return FrequencyThreshold.LOW;
+        }
+        String normalized = band.trim().toUpperCase(Locale.ROOT);
+        if (normalized.contains("LOW")) {
+            return FrequencyThreshold.LOW;
+        }
+        if (normalized.contains("MID") || normalized.contains("MEDIUM")) {
+            return FrequencyThreshold.MID;
+        }
+        if (normalized.contains("HIGH")) {
+            return FrequencyThreshold.HIGH;
+        }
+        Matcher matcher = BODY_BAND_PATTERN.matcher(normalized.toLowerCase(Locale.ROOT));
+        if (matcher.find()) {
+            int upperHz = Integer.parseInt(matcher.group(2));
+            if (upperHz <= 10) {
+                return FrequencyThreshold.LOW;
+            }
+            if (upperHz <= 50) {
+                return FrequencyThreshold.MID;
+            }
+            return FrequencyThreshold.HIGH;
+        }
+        return FrequencyThreshold.HIGH;
+    }
+
+    private SignalSeverity equipmentSeverity(String status) {
+        if (status == null || status.isBlank()) {
+            return SignalSeverity.NORMAL;
+        }
+        return switch (status.trim().toUpperCase(Locale.ROOT)) {
+            case "RUNNING" -> SignalSeverity.NORMAL;
+            case "WARNING" -> SignalSeverity.WARNING;
+            case "STOPPED", "FAULT" -> SignalSeverity.DANGER;
+            default -> SignalSeverity.WARNING;
+        };
+    }
+
+    private enum SignalSeverity {
+        NORMAL,
+        WARNING,
+        DANGER;
+
+        private static SignalSeverity max(SignalSeverity... severities) {
+            SignalSeverity result = NORMAL;
+            for (SignalSeverity severity : severities) {
+                if (severity == null) {
+                    continue;
+                }
+                if (severity.ordinal() > result.ordinal()) {
+                    result = severity;
+                }
+            }
+            return result;
+        }
+    }
+
+    private record FrequencyThreshold(double normal, double warning, double danger) {
+        private static final FrequencyThreshold LOW = new FrequencyThreshold(0.006, 0.008, 0.009);
+        private static final FrequencyThreshold MID = new FrequencyThreshold(0.015, 0.021, 0.024);
+        private static final FrequencyThreshold HIGH = new FrequencyThreshold(0.004, 0.005, 0.0055);
     }
 }

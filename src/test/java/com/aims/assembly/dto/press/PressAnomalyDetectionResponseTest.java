@@ -35,6 +35,8 @@ class PressAnomalyDetectionResponseTest {
         assertThat(point.targetCycleTimeSec()).isNull();
         assertThat(point.actualCycleTimeSec()).isNull();
         assertThat(point.cycleTimeGapSec()).isNull();
+        assertThat(point.warningCycleTimeGapSec()).isEqualTo(2.0);
+        assertThat(point.dangerCycleTimeGapSec()).isEqualTo(3.0);
         assertThat(point.riskScore()).isNull();
         assertThat(point.isAbnormal()).isFalse();
         assertThat(point.severity()).isEqualTo("NORMAL");
@@ -72,6 +74,8 @@ class PressAnomalyDetectionResponseTest {
         assertThat(metrics.targetCycleTimeSec()).isNull();
         assertThat(metrics.actualCycleTimeSec()).isNull();
         assertThat(metrics.cycleTimeGapSec()).isNull();
+        assertThat(metrics.warningCycleTimeGapSec()).isEqualTo(2.0);
+        assertThat(metrics.dangerCycleTimeGapSec()).isEqualTo(3.0);
         assertThat(metrics.riskScore()).isNull();
         assertThat(metrics.severity()).isEqualTo("NORMAL");
     }
@@ -101,6 +105,8 @@ class PressAnomalyDetectionResponseTest {
 
         assertThat(charts.cycleTime().points().get(0).targetCycleTimeSec()).isEqualTo(40.0);
         assertThat(charts.cycleTime().points().get(0).actualCycleTimeSec()).isEqualTo(43.0);
+        assertThat(charts.cycleTime().points().get(0).warningCycleTimeGapSec()).isEqualTo(2.0);
+        assertThat(charts.cycleTime().points().get(0).dangerCycleTimeGapSec()).isEqualTo(3.0);
         assertThat(charts.delay().points().get(0).cycleTimeGapSec()).isEqualTo(3.0);
     }
 }
