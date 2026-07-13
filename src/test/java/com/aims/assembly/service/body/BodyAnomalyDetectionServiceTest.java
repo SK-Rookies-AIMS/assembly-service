@@ -86,9 +86,10 @@ class BodyAnomalyDetectionServiceTest {
         assertThat(response.metrics().frequencyPeakBand()).isEqualTo("501~600Hz");
         assertThat(response.metrics().vibrationWarningLine()).isEqualTo(0.75);
         assertThat(response.metrics().vibrationDangerLine()).isEqualTo(1.25);
-        assertThat(response.metrics().peakWarningLine()).isEqualTo(0.015);
-        assertThat(response.metrics().peakDangerLine()).isEqualTo(0.03);
+        assertThat(response.metrics().peakWarningLine()).isEqualTo(0.005);
+        assertThat(response.metrics().peakDangerLine()).isEqualTo(0.0055);
         assertThat(response.metrics().riskScore()).isEqualTo(72.0);
+        assertThat(response.metrics().severity()).isEqualTo("CRITICAL");
         assertThat(response.metrics().frequencyBands())
                 .containsEntry("LOW", 1.193284)
                 .containsEntry("MEDIUM", 1.987782)
@@ -102,13 +103,13 @@ class BodyAnomalyDetectionServiceTest {
         assertThat(response.charts().frequencyPeak().points()).hasSize(1);
         assertThat(response.charts().frequencyPeak().points().get(0).value()).isEqualTo(2.907113);
         assertThat(response.charts().frequencyPeak().points().get(0).secondaryValue()).isEqualTo(0.003611111);
-        assertThat(response.charts().frequencyPeak().points().get(0).warningLine()).isEqualTo(0.015);
-        assertThat(response.charts().frequencyPeak().points().get(0).dangerLine()).isEqualTo(0.03);
+        assertThat(response.charts().frequencyPeak().points().get(0).warningLine()).isEqualTo(0.005);
+        assertThat(response.charts().frequencyPeak().points().get(0).dangerLine()).isEqualTo(0.0055);
 
         assertThat(response.frequencyChart()).hasSize(3);
-        assertThat(response.frequencyChart().get(0).targetValue()).isEqualTo(0.005);
-        assertThat(response.frequencyChart().get(0).warningValue()).isEqualTo(0.015);
-        assertThat(response.frequencyChart().get(0).dangerValue()).isEqualTo(0.03);
+        assertThat(response.frequencyChart().get(0).targetValue()).isEqualTo(0.006);
+        assertThat(response.frequencyChart().get(0).warningValue()).isEqualTo(0.008);
+        assertThat(response.frequencyChart().get(0).dangerValue()).isEqualTo(0.009);
 
         assertThat(response.alert().detected()).isTrue();
         assertThat(response.alert().reasons()).isNotEmpty();

@@ -26,6 +26,9 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class PressAnomalyDetectionService {
     private static final int MAX_EVENT_LOOKUP_SIZE = 10_000;
+    // ISO 7870 관리도 해석을 참고해, 프레스 사이클 편차를 정상/경고/위험으로 나누는 기준값이다.
+    private static final double PRESS_NORMAL_CYCLE_DELTA_SEC = 2.0;
+    private static final double PRESS_WARNING_CYCLE_DELTA_SEC = 3.0;
 
     private final PressAnalysisResultRepository repository;
     private final ManufacturingEventJsonRepository eventRepository;
@@ -130,19 +133,25 @@ public class PressAnomalyDetectionService {
             double maxRiskScore
     ) {
         if (point == null) {
-            return PressAnomalyDetectionResponseMapper.toMetrics(
+            String severity = detected ? "WARNING" : "NORMAL";
+                return PressAnomalyDetectionResponseMapper.toMetrics(
                     new PressAnomalyDetectionResponse.ChartPoint(
                             null, null, null,
                             0.0, 0.0, 0.0,
                             maxRiskScore,
                             null, null,
-                            detected ? "WARNING" : "NORMAL"
+                            severity,
+                            PressAnomalyDetectionResponse.WARNING_CYCLE_GAP_SEC,
+                            PressAnomalyDetectionResponse.DANGER_CYCLE_GAP_SEC
                     )
             );
         }
-        String computedSeverity = maxRiskScore >= 80.0
-                ? "CRITICAL"
-                : (maxRiskScore >= 60.0 ? "WARNING" : point.severity());
+        String computedSeverity = pressSeverity(point);
+        if (maxRiskScore >= 80.0) {
+            computedSeverity = "CRITICAL";
+        } else if (maxRiskScore >= 60.0 && "NORMAL".equalsIgnoreCase(computedSeverity)) {
+            computedSeverity = "WARNING";
+        }
         PressAnomalyDetectionResponse.ChartPoint updatedPoint = new PressAnomalyDetectionResponse.ChartPoint(
                 point.eventId(),
                 point.analysisId(),
@@ -153,7 +162,9 @@ public class PressAnomalyDetectionService {
                 maxRiskScore,
                 point.countIncreaseYn(),
                 point.isAbnormal(),
-                computedSeverity
+                computedSeverity,
+                PressAnomalyDetectionResponse.WARNING_CYCLE_GAP_SEC,
+                PressAnomalyDetectionResponse.DANGER_CYCLE_GAP_SEC
         );
         return PressAnomalyDetectionResponseMapper.toMetrics(updatedPoint);
     }
@@ -179,12 +190,12 @@ public class PressAnomalyDetectionService {
             if (Boolean.FALSE.equals(point.countIncreaseYn())) {
                 countIncreaseFail++;
             }
-            if (point.targetCycleTimeSec() != null && point.actualCycleTimeSec() != null
-                    && point.actualCycleTimeSec() > point.targetCycleTimeSec()) {
+            double gap = cycleTimeGap(point);
+            if (gap > PRESS_NORMAL_CYCLE_DELTA_SEC) {
                 cycleTimeExceeded++;
-                maxCycleTimeGap = Math.max(maxCycleTimeGap, point.actualCycleTimeSec() - point.targetCycleTimeSec());
+                maxCycleTimeGap = Math.max(maxCycleTimeGap, gap);
             }
-            if (Boolean.TRUE.equals(point.isAbnormal())) {
+            if (!"NORMAL".equalsIgnoreCase(pressSeverity(point))) {
                 abnormalCount++;
             }
         }
@@ -207,11 +218,8 @@ public class PressAnomalyDetectionService {
     }
 
     private boolean isPressAnomaly(PressAnomalyDetectionResponse.ChartPoint point) {
-        return point != null
-                && (Boolean.FALSE.equals(point.countIncreaseYn())
-                || (point.targetCycleTimeSec() != null && point.actualCycleTimeSec() != null
-                && point.actualCycleTimeSec() > point.targetCycleTimeSec())
-                || Boolean.TRUE.equals(point.isAbnormal()));
+        // 카운트 증가 여부, 사이클 편차, 분석 결과 abnormal 플래그를 함께 반영한다.
+        return point != null && !"NORMAL".equalsIgnoreCase(pressSeverity(point));
     }
 
     private double anomalyWeight(PressAnomalyDetectionResponse.ChartPoint point) {
@@ -219,17 +227,53 @@ public class PressAnomalyDetectionService {
             return -1.0;
         }
         double weight = 0.0;
+        String severity = pressSeverity(point);
+        if ("CRITICAL".equalsIgnoreCase(severity)) {
+            weight += 100.0;
+        } else if ("WARNING".equalsIgnoreCase(severity)) {
+            weight += 50.0;
+        }
         if (Boolean.FALSE.equals(point.countIncreaseYn())) {
             weight += 40.0;
         }
-        if (point.targetCycleTimeSec() != null && point.actualCycleTimeSec() != null
-                && point.actualCycleTimeSec() > point.targetCycleTimeSec()) {
-            weight += (point.actualCycleTimeSec() - point.targetCycleTimeSec()) * 10.0;
+        if (point.countIncreaseYn() == null) {
+            weight += 20.0;
         }
-        if (Boolean.TRUE.equals(point.isAbnormal())) {
-            weight += 50.0;
+        double gap = cycleTimeGap(point);
+        if (gap > 0.0) {
+            weight += gap * 10.0;
+        }
+        if (point.isAbnormal() != null && point.isAbnormal()) {
+            weight += 15.0;
         }
         return weight;
+    }
+
+    private double cycleTimeGap(PressAnomalyDetectionResponse.ChartPoint point) {
+        if (point == null || point.targetCycleTimeSec() == null || point.actualCycleTimeSec() == null) {
+            return 0.0;
+        }
+        return Math.abs(point.actualCycleTimeSec() - point.targetCycleTimeSec());
+    }
+
+    private String pressSeverity(PressAnomalyDetectionResponse.ChartPoint point) {
+        if (point == null) {
+            return "NORMAL";
+        }
+        if ("CRITICAL".equalsIgnoreCase(point.severity())) {
+            return "CRITICAL";
+        }
+        if ("WARNING".equalsIgnoreCase(point.severity())) {
+            return "WARNING";
+        }
+        double gap = cycleTimeGap(point);
+        if (Boolean.FALSE.equals(point.countIncreaseYn()) || gap > PRESS_WARNING_CYCLE_DELTA_SEC) {
+            return "CRITICAL";
+        }
+        if (point.countIncreaseYn() == null || gap > PRESS_NORMAL_CYCLE_DELTA_SEC || Boolean.TRUE.equals(point.isAbnormal())) {
+            return "WARNING";
+        }
+        return "NORMAL";
     }
 
     private String formatSec(Double value) {

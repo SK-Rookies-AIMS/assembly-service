@@ -59,10 +59,14 @@ class PressAnomalyDetectionServiceTest {
         assertThat(response.chart().get(0).targetCycleTimeSec()).isEqualTo(40.0);
         assertThat(response.chart().get(0).actualCycleTimeSec()).isEqualTo(43.0);
         assertThat(response.chart().get(0).cycleTimeGapSec()).isEqualTo(3.0);
+        assertThat(response.chart().get(0).warningCycleTimeGapSec()).isEqualTo(2.0);
+        assertThat(response.chart().get(0).dangerCycleTimeGapSec()).isEqualTo(3.0);
         assertThat(response.charts().cycleTime().title()).isEqualTo("press cycle time");
         assertThat(response.charts().cycleTime().points()).hasSize(1);
         assertThat(response.charts().cycleTime().points().get(0).targetCycleTimeSec()).isEqualTo(40.0);
         assertThat(response.charts().cycleTime().points().get(0).actualCycleTimeSec()).isEqualTo(43.0);
+        assertThat(response.metrics().warningCycleTimeGapSec()).isEqualTo(2.0);
+        assertThat(response.metrics().dangerCycleTimeGapSec()).isEqualTo(3.0);
         assertThat(response.charts().delay().title()).isEqualTo("press delay/gap");
         assertThat(response.charts().delay().points()).hasSize(1);
         assertThat(response.charts().delay().points().get(0).cycleTimeGapSec()).isEqualTo(3.0);

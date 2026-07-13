@@ -1,6 +1,7 @@
 package com.aims.assembly.service.body;
 
 import com.aims.assembly.domain.body.BodyAnalysisResult;
+import com.aims.assembly.domain.enums.Severity;
 import com.aims.assembly.dto.body.BodyAnomalyDetectionResponse;
 import com.aims.assembly.mapper.BodyAnomalyDetectionResponseMapper;
 import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
@@ -34,25 +35,15 @@ import java.util.regex.Pattern;
 @Transactional(readOnly = true)
 public class BodyAnomalyDetectionService {
     private static final int MAX_EVENT_LOOKUP_SIZE = 10_000;
+    // ISO 13373/20816의 밴드별 진동 관리 원칙을 참고해 LOW/MID/HIGH 임계값을 분리한다.
     private static final Pattern DETAILED_BAND_PATTERN = Pattern.compile("freq_(\\d+)_(\\d+)_hz", Pattern.CASE_INSENSITIVE);
-
-    /*
-     * Kafka BODY score formula:
-     * score = min(50, robotVibrationScore * 40)
-     *       + min(30, frequencyPeakValue * 1000)
-     *       + motion/operation penalties
-     *
-     * Reverse-derived chart lines:
-     * - warning: component contribution reaches 30
-     * - danger: component contribution reaches component cap
-     */
-    private static final Double ROBOT_VIBRATION_WARNING_LINE = 0.75;  // 30 / 40
-    private static final Double ROBOT_VIBRATION_DANGER_LINE = 1.25;    // 50 / 40
-    private static final Double PEAK_WARNING_LINE = 0.015;             // 15 / 1000
-    private static final Double PEAK_DANGER_LINE = 0.03;                // 30 / 1000
-    private static final Double FREQUENCY_TARGET_VALUE = 0.005;
-    private static final Double FREQUENCY_WARNING_VALUE = PEAK_WARNING_LINE;
-    private static final Double FREQUENCY_DANGER_VALUE = PEAK_DANGER_LINE;
+    private static final Double ROBOT_VIBRATION_WARNING_LINE = 0.75;
+    private static final Double ROBOT_VIBRATION_DANGER_LINE = 1.25;
+    private static final BandThreshold LOW_BAND_THRESHOLD = new BandThreshold(0.006, 0.008, 0.009);
+    private static final BandThreshold MID_BAND_THRESHOLD = new BandThreshold(0.015, 0.021, 0.024);
+    private static final BandThreshold HIGH_BAND_THRESHOLD = new BandThreshold(0.004, 0.005, 0.0055);
+    private static final Double PEAK_WARNING_LINE = MID_BAND_THRESHOLD.warning();
+    private static final Double PEAK_DANGER_LINE = MID_BAND_THRESHOLD.danger();
 
     private final BodyAnalysisResultRepository repository;
     private final ManufacturingEventJsonRepository eventJsonRepository;
@@ -158,9 +149,10 @@ public class BodyAnomalyDetectionService {
                 .toList();
 
         Map<String, Double> rawFrequencyBands = resolveRawFrequencyBands(summaryResult, summaryPoint);
+        Map<String, Double> frequencyBands = summarizeFrequencyBands(rawFrequencyBands);
         BodyAnomalyDetectionResponse.FrequencyZoneAnalysis freqAnalysis = analyzeFrequencyZones(rawFrequencyBands);
         List<BodyAnomalyDetectionResponse.FrequencyBandPoint> freqChart = buildFrequencyChart(
-                rawFrequencyBands,
+                frequencyBands,
                 summaryPoint != null ? summaryPoint.timestamp() : null
         );
         List<BodyAnomalyDetectionResponse.FrequencyZonePoint> freqZoneChart = buildFrequencyZoneChart(rawFrequencyBands);
@@ -231,12 +223,21 @@ public class BodyAnomalyDetectionService {
             vibrationRms = sensorData.vibrationRms();
         }
 
-        boolean isAbnormal = Boolean.TRUE.equals(analysis.getIsAbnormal())
-                || (analysis.getRiskScore() != null && analysis.getRiskScore() >= 30.0);
-        String severity = analysis.getSeverity() == null ? "NORMAL" : analysis.getSeverity().name();
-        if (isAbnormal && !"CRITICAL".equals(severity) && !"WARNING".equals(severity)) {
-            severity = "WARNING";
-        }
+        Map<String, Double> summaryBands = summarizeFrequencyBands(parseFrequencyBands(result.getFrequencyBandsJson()));
+        BandThreshold peakThreshold = thresholdForBand(
+                resolveFrequencyPeakBand(summaryBands, result.getFrequencyPeakValue(), result.getFrequencyPeakBand())
+        );
+        String severity = bodySeverity(
+                result.getRobotMotionStatus(),
+                result.getRobotOperationMode(),
+                result.getFrequencyPeakBand(),
+                summaryBands,
+                result.getFrequencyPeakValue(),
+                analysis.getSeverity(),
+                analysis.getRiskScore(),
+                Boolean.TRUE.equals(analysis.getIsAbnormal())
+        );
+        boolean isAbnormal = !"NORMAL".equalsIgnoreCase(severity);
 
         return BodyAnomalyDetectionResponseMapper.toChartPoint(
                 analysis.getEventId(),
@@ -247,8 +248,8 @@ public class BodyAnomalyDetectionService {
                 vibrationPeak,
                 ROBOT_VIBRATION_WARNING_LINE,
                 ROBOT_VIBRATION_DANGER_LINE,
-                PEAK_WARNING_LINE,
-                PEAK_DANGER_LINE,
+                peakThreshold.warning(),
+                peakThreshold.danger(),
                 vibrationRms,
                 analysis.getRiskScore(),
                 isAbnormal,
@@ -266,15 +267,15 @@ public class BodyAnomalyDetectionService {
             Double averageFrequencyPeakValue,
             Double riskScore
     ) {
-        String severity = detected ? "WARNING" : "NORMAL";
-        if (point != null && point.severity() != null && !detected) {
-            severity = point.severity();
-        }
+        String severity = point != null && point.severity() != null
+                ? point.severity()
+                : (detected ? "WARNING" : "NORMAL");
 
         Double pointRobotVibrationScore = point != null ? point.robotVibrationScore() : null;
         Double pointVibrationPeak = point != null ? point.vibrationPeak() : null;
         Double pointVibrationRms = point != null ? point.vibrationRms() : null;
         Double pointFrequencyPeakValue = point != null ? point.frequencyPeakValue() : null;
+        BandThreshold peakThreshold = peakThresholdFor(result, point, averageFrequencyPeakValue);
 
         if (result == null) {
             BodyProcessData bodyData = null;
@@ -293,8 +294,8 @@ public class BodyAnomalyDetectionService {
                         averageFrequencyPeakValue != null ? averageFrequencyPeakValue : pointFrequencyPeakValue,
                         ROBOT_VIBRATION_WARNING_LINE,
                         ROBOT_VIBRATION_DANGER_LINE,
-                        PEAK_WARNING_LINE,
-                        PEAK_DANGER_LINE,
+                        peakThreshold.warning(),
+                        peakThreshold.danger(),
                         riskScore != null ? riskScore : 0.0,
                         "0-100",
                         severity,
@@ -312,8 +313,8 @@ public class BodyAnomalyDetectionService {
                     averageFrequencyPeakValue != null ? averageFrequencyPeakValue : pointFrequencyPeakValue,
                     ROBOT_VIBRATION_WARNING_LINE,
                     ROBOT_VIBRATION_DANGER_LINE,
-                    PEAK_WARNING_LINE,
-                    PEAK_DANGER_LINE,
+                    peakThreshold.warning(),
+                    peakThreshold.danger(),
                     riskScore != null ? riskScore : 0.0,
                     "0-100",
                     severity,
@@ -331,8 +332,8 @@ public class BodyAnomalyDetectionService {
                 averageFrequencyPeakValue != null ? averageFrequencyPeakValue : result.getFrequencyPeakValue(),
                 ROBOT_VIBRATION_WARNING_LINE,
                 ROBOT_VIBRATION_DANGER_LINE,
-                PEAK_WARNING_LINE,
-                PEAK_DANGER_LINE,
+                peakThreshold.warning(),
+                peakThreshold.danger(),
                 riskScore != null ? riskScore : 0.0,
                 "0-100",
                 severity,
@@ -364,24 +365,51 @@ public class BodyAnomalyDetectionService {
         return localized;
     }
 
+    private BandThreshold peakThresholdFor(
+            BodyAnalysisResult result,
+            BodyAnomalyDetectionResponse.ChartPoint point,
+            Double fallbackFrequencyPeakValue
+    ) {
+        if (point != null) {
+            return new BandThreshold(
+                    0.0,
+                    point.peakWarningLine() != null ? point.peakWarningLine() : PEAK_WARNING_LINE,
+                    point.peakDangerLine() != null ? point.peakDangerLine() : PEAK_DANGER_LINE
+            );
+        }
+
+        if (result != null) {
+            Map<String, Double> summaryBands = summarizeFrequencyBands(parseFrequencyBands(result.getFrequencyBandsJson()));
+            String band = resolveFrequencyPeakBand(
+                    summaryBands,
+                    fallbackFrequencyPeakValue != null ? fallbackFrequencyPeakValue : result.getFrequencyPeakValue(),
+                    result.getFrequencyPeakBand()
+            );
+            BandThreshold threshold = thresholdForBand(band);
+            return new BandThreshold(threshold.target(), threshold.warning(), threshold.danger());
+        }
+
+        return new BandThreshold(0.0, PEAK_WARNING_LINE, PEAK_DANGER_LINE);
+    }
+
     private List<BodyAnomalyDetectionResponse.FrequencyBandPoint> buildFrequencyChart(
-            Map<String, Double> rawBands,
+            Map<String, Double> bands,
             LocalDateTime chartTime
     ) {
-        if (rawBands == null || rawBands.isEmpty()) {
+        if (bands == null || bands.isEmpty()) {
             return List.of();
         }
 
-        return rawBands.entrySet().stream()
+        return bands.entrySet().stream()
                 .filter(entry -> entry.getValue() != null)
                 .sorted(Comparator.comparingInt(entry -> frequencyBandOrder(entry.getKey())))
                 .map(entry -> BodyAnomalyDetectionResponseMapper.toFrequencyBandPoint(
                         chartTime,
                         localizeFrequencyBandLabel(entry.getKey()),
                         entry.getValue(),
-                        FREQUENCY_TARGET_VALUE,
-                        FREQUENCY_WARNING_VALUE,
-                        FREQUENCY_DANGER_VALUE
+                        thresholdForBand(entry.getKey()).target(),
+                        thresholdForBand(entry.getKey()).warning(),
+                        thresholdForBand(entry.getKey()).danger()
                 ))
                 .toList();
     }
@@ -478,9 +506,9 @@ public class BodyAnomalyDetectionService {
                 description,
                 stats.avg(),
                 stats.max(),
-                FREQUENCY_TARGET_VALUE,
-                FREQUENCY_WARNING_VALUE,
-                FREQUENCY_DANGER_VALUE
+                MID_BAND_THRESHOLD.target(),
+                MID_BAND_THRESHOLD.warning(),
+                MID_BAND_THRESHOLD.danger()
         );
     }
 
@@ -604,6 +632,32 @@ public class BodyAnomalyDetectionService {
         };
     }
 
+    private BandThreshold thresholdForBand(String rawKey) {
+        // 상세 주파수 키가 아니라도, ISO 기준처럼 대역별 정상 범위를 먼저 적용한다.
+        String normalized = rawKey == null ? "" : rawKey.trim().toUpperCase(Locale.ROOT);
+        if (normalized.contains("LOW")) {
+            return LOW_BAND_THRESHOLD;
+        }
+        if (normalized.contains("MID") || normalized.contains("MEDIUM")) {
+            return MID_BAND_THRESHOLD;
+        }
+        if (normalized.contains("HIGH")) {
+            return HIGH_BAND_THRESHOLD;
+        }
+        int[] range = extractBandRange(rawKey);
+        if (range != null) {
+            int upperHz = range[1];
+            if (upperHz <= 10) {
+                return LOW_BAND_THRESHOLD;
+            }
+            if (upperHz <= 50) {
+                return MID_BAND_THRESHOLD;
+            }
+            return HIGH_BAND_THRESHOLD;
+        }
+        return LOW_BAND_THRESHOLD;
+    }
+
     private String localizeFrequencyBandLabel(String raw) {
         int[] range = extractBandRange(raw);
         if (range != null) {
@@ -638,6 +692,34 @@ public class BodyAnomalyDetectionService {
             }
         }
         return bestBand;
+    }
+
+    private String bodySeverity(
+            String motionStatus,
+            String operationMode,
+            String frequencyPeakBand,
+            Map<String, Double> frequencyBands,
+            Double frequencyPeakValue,
+            Severity analysisSeverity,
+            Double riskScore,
+            boolean analysisAbnormal
+    ) {
+        // 로봇 상태 + 운전 모드 + 주파수 피크를 합산해 차체 이상 등급을 정한다.
+        SeverityLevel severity = SeverityLevel.NORMAL;
+        severity = SeverityLevel.max(severity, motionSeverity(motionStatus));
+        severity = SeverityLevel.max(severity, operationSeverity(operationMode));
+        severity = SeverityLevel.max(severity, frequencySeverity(frequencyPeakBand, frequencyBands, frequencyPeakValue));
+
+        if (analysisSeverity == Severity.CRITICAL || (riskScore != null && riskScore >= 80.0)) {
+            severity = SeverityLevel.max(severity, SeverityLevel.CRITICAL);
+        } else if (analysisSeverity == Severity.WARNING || (riskScore != null && riskScore >= 60.0)) {
+            severity = SeverityLevel.max(severity, SeverityLevel.WARNING);
+        }
+
+        if (analysisAbnormal && severity == SeverityLevel.NORMAL) {
+            severity = SeverityLevel.WARNING;
+        }
+        return severity.name();
     }
 
     private String localizeFrequencyBandKey(String raw) {
@@ -702,7 +784,7 @@ public class BodyAnomalyDetectionService {
 
         for (BodyAnomalyDetectionResponse.ChartPoint point : points) {
             if (!isBodyAnomaly(point)) continue;
-            if (Boolean.TRUE.equals(point.isAbnormal())) abnormalCount++;
+            if (!"NORMAL".equalsIgnoreCase(point.severity()) || Boolean.TRUE.equals(point.isAbnormal())) abnormalCount++;
             if (point.robotVibrationScore() != null) {
                 maxRobotVibrationScore = Math.max(maxRobotVibrationScore, point.robotVibrationScore());
             }
@@ -748,16 +830,64 @@ public class BodyAnomalyDetectionService {
         };
     }
 
+    private SeverityLevel motionSeverity(String motionStatus) {
+        if (motionStatus == null || motionStatus.isBlank()) {
+            return SeverityLevel.WARNING;
+        }
+        return switch (motionStatus.trim().toUpperCase(Locale.ROOT)) {
+            case "NORMAL" -> SeverityLevel.NORMAL;
+            case "WARNING", "UNKNOWN" -> SeverityLevel.WARNING;
+            case "ABNORMAL", "COLLISION_RISK" -> SeverityLevel.CRITICAL;
+            default -> SeverityLevel.WARNING;
+        };
+    }
+
+    private SeverityLevel operationSeverity(String operationMode) {
+        if (operationMode == null || operationMode.isBlank()) {
+            return SeverityLevel.WARNING;
+        }
+        return switch (operationMode.trim().toUpperCase(Locale.ROOT)) {
+            case "AUTO" -> SeverityLevel.NORMAL;
+            case "MANUAL", "STOPPED", "AUTO_MANUAL_STOPPED" -> SeverityLevel.WARNING;
+            default -> SeverityLevel.WARNING;
+        };
+    }
+
+    private SeverityLevel frequencySeverity(
+            String frequencyPeakBand,
+            Map<String, Double> frequencyBands,
+            Double frequencyPeakValue
+    ) {
+        // 주파수 피크는 밴드별 정상/경고/위험 임계값을 따로 둔다.
+        if (frequencyPeakValue == null || frequencyPeakValue <= 0.0) {
+            return SeverityLevel.NORMAL;
+        }
+
+        String thresholdBand = resolveFrequencyPeakBand(frequencyBands, frequencyPeakValue, frequencyPeakBand);
+        BandThreshold threshold = thresholdForBand(thresholdBand);
+        if (frequencyPeakValue >= threshold.danger()) {
+            return SeverityLevel.CRITICAL;
+        }
+        if (frequencyPeakValue >= threshold.warning()) {
+            return SeverityLevel.WARNING;
+        }
+        return SeverityLevel.NORMAL;
+    }
+
     private boolean isBodyAnomaly(BodyAnomalyDetectionResponse.ChartPoint point) {
+        // 차체는 severity, analysis abnormal, risk score 중 하나만 이상이어도 anomaly로 본다.
         return point != null
-                && (Boolean.TRUE.equals(point.isAbnormal())
-                || (point.riskScore() != null && point.riskScore() >= 30.0));
+                && (!"NORMAL".equalsIgnoreCase(point.severity())
+                || Boolean.TRUE.equals(point.isAbnormal())
+                || (point.riskScore() != null && point.riskScore() >= 60.0));
     }
 
     private double anomalyWeight(BodyAnomalyDetectionResponse.ChartPoint point) {
         if (point == null) return -1.0;
         double weight = 0.0;
-        if (Boolean.TRUE.equals(point.isAbnormal())) weight += 50.0;
+        if ("CRITICAL".equalsIgnoreCase(point.severity())) weight += 100.0;
+        else if ("WARNING".equalsIgnoreCase(point.severity())) weight += 50.0;
+        if (Boolean.TRUE.equals(point.isAbnormal())) weight += 25.0;
         if (point.riskScore() != null) weight += point.riskScore();
         if (point.robotVibrationScore() != null) weight += point.robotVibrationScore() * 10.0;
         if (point.vibrationPeak() != null) weight += point.vibrationPeak() * 5.0;
@@ -895,6 +1025,23 @@ public class BodyAnomalyDetectionService {
             Double vibrationScore,
             Double peakValue,
             Double vibrationRms
+    ) {
+    }
+
+    private enum SeverityLevel {
+        NORMAL,
+        WARNING,
+        CRITICAL;
+
+        private static SeverityLevel max(SeverityLevel left, SeverityLevel right) {
+            return right.ordinal() > left.ordinal() ? right : left;
+        }
+    }
+
+    private record BandThreshold(
+            double target,
+            double warning,
+            double danger
     ) {
     }
 }
