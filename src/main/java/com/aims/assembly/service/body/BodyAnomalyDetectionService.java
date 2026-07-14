@@ -5,6 +5,7 @@ import com.aims.assembly.domain.enums.Severity;
 import com.aims.assembly.dto.body.BodyAnomalyDetectionResponse;
 import com.aims.assembly.mapper.BodyAnomalyDetectionResponseMapper;
 import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
+import com.aims.assembly.repository.event.AlertEventRepository;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +25,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.stream.Collectors;
 import java.util.regex.Matcher;
@@ -47,6 +49,7 @@ public class BodyAnomalyDetectionService {
 
     private final BodyAnalysisResultRepository repository;
     private final ManufacturingEventJsonRepository eventJsonRepository;
+    private final AlertEventRepository alertEventRepository;
     private final ObjectMapper objectMapper;
 
     @Cacheable(
@@ -86,6 +89,13 @@ public class BodyAnomalyDetectionService {
                 .toList();
 
         List<BodyAnomalyDetectionResponse.ChartPoint> points = allPoints;
+        Map<String, String> logNoByEventId = resolveAlertLogNos(points.stream()
+                .map(BodyAnomalyDetectionResponse.ChartPoint::eventId)
+                .filter(eventId -> eventId != null && !eventId.isBlank())
+                .toList());
+        points = points.stream()
+                .map(point -> attachLogNo(point, logNoByEventId.get(point.eventId())))
+                .toList();
 
         boolean detected = points.stream().anyMatch(this::isBodyAnomaly);
         LocalDateTime previousEndAt = points.isEmpty() ? null : points.get(0).timestamp().minusNanos(1);
@@ -126,6 +136,7 @@ public class BodyAnomalyDetectionService {
                 .map(point -> BodyAnomalyDetectionResponseMapper.toRobotMetricPoint(
                         point.eventId(),
                         point.analysisId(),
+                        point.logNo(),
                         point.timestamp(),
                         point.robotVibrationScore(),
                         point.vibrationWarningLine(),
@@ -138,6 +149,7 @@ public class BodyAnomalyDetectionService {
                 .map(point -> BodyAnomalyDetectionResponseMapper.toPeakMetricPoint(
                         point.eventId(),
                         point.analysisId(),
+                        point.logNo(),
                         point.timestamp(),
                         point.frequencyPeakValue(),
                         point.vibrationRms(),
@@ -242,6 +254,7 @@ public class BodyAnomalyDetectionService {
         return BodyAnomalyDetectionResponseMapper.toChartPoint(
                 analysis.getEventId(),
                 analysis.getAnalysisId(),
+                null,
                 analysis.getEventTime(),
                 robotVibrationScore,
                 result.getFrequencyPeakValue(),
@@ -338,6 +351,87 @@ public class BodyAnomalyDetectionService {
                 "0-100",
                 severity,
                 summarizeFrequencyBands(parseFrequencyBands(result.getFrequencyBandsJson()))
+        );
+    }
+
+    private Map<String, String> resolveAlertLogNos(List<String> eventIds) {
+        if (eventIds == null || eventIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return alertEventRepository.findByEventIdIn(new LinkedHashSet<>(eventIds)).stream()
+                .collect(Collectors.toMap(
+                        event -> event.getEventId(),
+                        event -> event.getLogNo(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+    }
+
+    private BodyAnomalyDetectionResponse.ChartPoint attachLogNo(
+            BodyAnomalyDetectionResponse.ChartPoint point,
+            String logNo
+    ) {
+        if (point == null) {
+            return null;
+        }
+        return new BodyAnomalyDetectionResponse.ChartPoint(
+                point.eventId(),
+                point.analysisId(),
+                logNo,
+                point.timestamp(),
+                point.robotVibrationScore(),
+                point.frequencyPeakValue(),
+                point.vibrationPeak(),
+                point.vibrationWarningLine(),
+                point.vibrationDangerLine(),
+                point.peakWarningLine(),
+                point.peakDangerLine(),
+                point.vibrationRms(),
+                point.riskScore(),
+                point.isAbnormal(),
+                point.severity()
+        );
+    }
+
+    private BodyAnomalyDetectionResponse.RobotMetricPoint attachLogNo(
+            BodyAnomalyDetectionResponse.RobotMetricPoint point,
+            String logNo
+    ) {
+        if (point == null) {
+            return null;
+        }
+        return new BodyAnomalyDetectionResponse.RobotMetricPoint(
+                point.eventId(),
+                point.analysisId(),
+                logNo,
+                point.timestamp(),
+                point.value(),
+                point.warningLine(),
+                point.dangerLine(),
+                point.isAbnormal(),
+                point.severity()
+        );
+    }
+
+    private BodyAnomalyDetectionResponse.PeakMetricPoint attachLogNo(
+            BodyAnomalyDetectionResponse.PeakMetricPoint point,
+            String logNo
+    ) {
+        if (point == null) {
+            return null;
+        }
+        return new BodyAnomalyDetectionResponse.PeakMetricPoint(
+                point.eventId(),
+                point.analysisId(),
+                logNo,
+                point.timestamp(),
+                point.value(),
+                point.secondaryValue(),
+                point.warningLine(),
+                point.dangerLine(),
+                point.isAbnormal(),
+                point.severity()
         );
     }
     private Map<String, Double> parseFrequencyBands(String json) {
@@ -787,10 +881,10 @@ public class BodyAnomalyDetectionService {
     private BodyAnomalyDetectionResponse.AlertPanel toAlert(
             List<BodyAnomalyDetectionResponse.ChartPoint> points,
             boolean detected,
-            BodyAnalysisResult summaryResult
+        BodyAnalysisResult summaryResult
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return BodyAnomalyDetectionResponseMapper.toAlert(false, "차체 이상 탐지 미검출", List.of());
+            return BodyAnomalyDetectionResponseMapper.toAlert(false, "차체 이상 탐지 미검출", null, List.of());
         }
 
         List<String> reasons = new ArrayList<>();
@@ -835,7 +929,12 @@ public class BodyAnomalyDetectionService {
             reasons.add(String.format("최대 로봇 진동 가속도: %.4f", maxRobotVibrationScore));
         }
 
-        return BodyAnomalyDetectionResponseMapper.toAlert(true, "차체 이상 탐지 경고", List.copyOf(reasons));
+        String logNo = summaryResult == null ? null : resolveAlertLogNo(summaryResult.getAnalysisResult().getEventId());
+        return BodyAnomalyDetectionResponseMapper.toAlert(true, "차체 이상 탐지 경고", logNo, List.copyOf(reasons));
+    }
+
+    private String resolveAlertLogNo(String eventId) {
+        return alertEventRepository.findLogNoByEventId(eventId).orElse(null);
     }
 
     private String formatFrequencyBand(String raw) {

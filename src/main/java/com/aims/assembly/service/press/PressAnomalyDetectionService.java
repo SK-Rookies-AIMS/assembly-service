@@ -3,6 +3,7 @@ package com.aims.assembly.service.press;
 import com.aims.assembly.domain.press.PressAnalysisResult;
 import com.aims.assembly.dto.press.PressAnomalyDetectionResponse;
 import com.aims.assembly.mapper.PressAnomalyDetectionResponseMapper;
+import com.aims.assembly.repository.event.AlertEventRepository;
 import com.aims.assembly.repository.analysis.PressAnalysisResultRepository;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +18,9 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -32,6 +35,7 @@ public class PressAnomalyDetectionService {
 
     private final PressAnalysisResultRepository repository;
     private final ManufacturingEventJsonRepository eventRepository;
+    private final AlertEventRepository alertEventRepository;
 
     @Cacheable(
             cacheNames = "press-anomaly-dashboard",
@@ -68,6 +72,13 @@ public class PressAnomalyDetectionService {
                 .filter(point -> point.timestamp() != null)
                 .sorted(Comparator.comparing(PressAnomalyDetectionResponse.ChartPoint::timestamp)
                         .thenComparing(PressAnomalyDetectionResponse.ChartPoint::eventId))
+                .toList();
+        Map<String, String> logNoByEventId = resolveAlertLogNos(points.stream()
+                .map(PressAnomalyDetectionResponse.ChartPoint::eventId)
+                .filter(eventId -> eventId != null && !eventId.isBlank())
+                .toList());
+        points = points.stream()
+                .map(point -> attachLogNo(point, logNoByEventId.get(point.eventId())))
                 .toList();
 
         PressAnomalyDetectionResponse.ChartPoint latest = points.isEmpty() ? null : points.get(points.size() - 1);
@@ -127,6 +138,44 @@ public class PressAnomalyDetectionService {
         return PressAnomalyDetectionResponseMapper.toChartPoint(result);
     }
 
+    private Map<String, String> resolveAlertLogNos(List<String> eventIds) {
+        if (eventIds == null || eventIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return alertEventRepository.findByEventIdIn(eventIds).stream()
+                .collect(Collectors.toMap(
+                        event -> event.getEventId(),
+                        event -> event.getLogNo(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+    }
+
+    private PressAnomalyDetectionResponse.ChartPoint attachLogNo(
+            PressAnomalyDetectionResponse.ChartPoint point,
+            String logNo
+    ) {
+        if (point == null) {
+            return null;
+        }
+        return new PressAnomalyDetectionResponse.ChartPoint(
+                point.eventId(),
+                point.analysisId(),
+                logNo,
+                point.timestamp(),
+                point.targetCycleTimeSec(),
+                point.actualCycleTimeSec(),
+                point.cycleTimeGapSec(),
+                point.riskScore(),
+                point.countIncreaseYn(),
+                point.isAbnormal(),
+                point.severity(),
+                point.warningCycleTimeGapSec(),
+                point.dangerCycleTimeGapSec()
+        );
+    }
+
     private PressAnomalyDetectionResponse.Metrics toMetrics(
             PressAnomalyDetectionResponse.ChartPoint point,
             boolean detected,
@@ -134,9 +183,9 @@ public class PressAnomalyDetectionService {
     ) {
         if (point == null) {
             String severity = detected ? "WARNING" : "NORMAL";
-                return PressAnomalyDetectionResponseMapper.toMetrics(
+            return PressAnomalyDetectionResponseMapper.toMetrics(
                     new PressAnomalyDetectionResponse.ChartPoint(
-                            null, null, null,
+                            null, null, null, null,
                             0.0, 0.0, 0.0,
                             maxRiskScore,
                             null, null,
@@ -155,6 +204,7 @@ public class PressAnomalyDetectionService {
         PressAnomalyDetectionResponse.ChartPoint updatedPoint = new PressAnomalyDetectionResponse.ChartPoint(
                 point.eventId(),
                 point.analysisId(),
+                point.logNo(),
                 point.timestamp(),
                 point.targetCycleTimeSec(),
                 point.actualCycleTimeSec(),
@@ -175,7 +225,7 @@ public class PressAnomalyDetectionService {
             PressAnomalyDetectionResponse.ChartPoint summaryPoint
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return PressAnomalyDetectionResponseMapper.toAlert(false, "프레스 이상 탐지 미검출", List.of());
+            return PressAnomalyDetectionResponseMapper.toAlert(false, "프레스 이상 탐지 미검출", null, List.of());
         }
 
         int countIncreaseFail = 0;
@@ -211,7 +261,12 @@ public class PressAnomalyDetectionService {
             reasons.add("대표 이상 이벤트: " + summaryPoint.eventId());
         }
 
-        return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 탐지 경고", List.copyOf(reasons));
+        String logNo = summaryPoint == null ? null : resolveAlertLogNo(summaryPoint.eventId());
+        return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 탐지 경고", logNo, List.copyOf(reasons));
+    }
+
+    private String resolveAlertLogNo(String eventId) {
+        return alertEventRepository.findLogNoByEventId(eventId).orElse(null);
     }
 
     // 카운트 증가, 사이클 편차, abnormal 플래그를 종합해 프레스 이상 여부를 판단한다.

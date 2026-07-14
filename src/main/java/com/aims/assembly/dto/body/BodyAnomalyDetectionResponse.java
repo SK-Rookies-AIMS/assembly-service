@@ -68,6 +68,7 @@ public record BodyAnomalyDetectionResponse(
     public record RobotMetricPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double value,
             Double warningLine,
@@ -80,6 +81,7 @@ public record BodyAnomalyDetectionResponse(
     public record PeakMetricPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double value,
             Double secondaryValue,
@@ -93,6 +95,7 @@ public record BodyAnomalyDetectionResponse(
     public record ChartPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double robotVibrationScore,
             Double frequencyPeakValue,
@@ -147,6 +150,7 @@ public record BodyAnomalyDetectionResponse(
     public record AlertPanel(
             Boolean detected,
             String title,
+            String logNo,
             List<String> reasons
     ) {
     }
