@@ -131,10 +131,11 @@ public record BodyAnomalyDetectionResponse(
     }
 
     public record FrequencyZoneAnalysis(
-            ZoneStats low,
-            ZoneStats main,
-            ZoneStats high,
-            ZoneStats ultra
+            ZoneStats zone1,
+            ZoneStats zone2,
+            ZoneStats zone3,
+            ZoneStats zone4,
+            ZoneStats zone5
     ) {
         public record ZoneStats(
                 Double avg,

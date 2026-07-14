@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class PressAnomalyDetectionService {
     private static final int MAX_EVENT_LOOKUP_SIZE = 10_000;
-    // ISO 7870 관리도 해석을 참고해, 프레스 사이클 편차를 정상/경고/위험으로 나누는 기준값이다.
+    // 생산 수 증가 여부, 사이클 편차, 분석 결과 abnormal 플래그를 함께 반영한다.
     private static final double PRESS_NORMAL_CYCLE_DELTA_SEC = 2.0;
     private static final double PRESS_WARNING_CYCLE_DELTA_SEC = 3.0;
 
@@ -191,9 +191,9 @@ public class PressAnomalyDetectionService {
                 countIncreaseFail++;
             }
             double gap = cycleTimeGap(point);
+            maxCycleTimeGap = Math.max(maxCycleTimeGap, gap);
             if (gap > PRESS_NORMAL_CYCLE_DELTA_SEC) {
                 cycleTimeExceeded++;
-                maxCycleTimeGap = Math.max(maxCycleTimeGap, gap);
             }
             if (!"NORMAL".equalsIgnoreCase(pressSeverity(point))) {
                 abnormalCount++;
@@ -201,15 +201,12 @@ public class PressAnomalyDetectionService {
         }
 
         List<String> reasons = new ArrayList<>();
-        if (countIncreaseFail > 0) {
-            reasons.add("생산 수 증가 미충족: " + countIncreaseFail + "건");
-        }
+        reasons.add("생산량 미증가: " + countIncreaseFail + "건");
+        reasons.add("최대 사이클 차이: " + formatSec(maxCycleTimeGap) + " sec");
         if (cycleTimeExceeded > 0) {
             reasons.add("사이클 지연 초과: " + cycleTimeExceeded + "건, 최대 +" + formatSec(maxCycleTimeGap) + " sec");
         }
-        if (abnormalCount > 0) {
-            reasons.add("이상 감지: " + abnormalCount + "건");
-        }
+        reasons.add("이상 감지: " + abnormalCount + "건");
         if (summaryPoint != null) {
             reasons.add("대표 이상 이벤트: " + summaryPoint.eventId());
         }
@@ -217,11 +214,13 @@ public class PressAnomalyDetectionService {
         return PressAnomalyDetectionResponseMapper.toAlert(true, "프레스 이상 탐지 경고", List.copyOf(reasons));
     }
 
+    // 카운트 증가, 사이클 편차, abnormal 플래그를 종합해 프레스 이상 여부를 판단한다.
     private boolean isPressAnomaly(PressAnomalyDetectionResponse.ChartPoint point) {
-        // 카운트 증가 여부, 사이클 편차, 분석 결과 abnormal 플래그를 함께 반영한다.
+        // 카운트 증가, 사이클 편차, abnormal 플래그를 함께 이상 조건으로 본다.
         return point != null && !"NORMAL".equalsIgnoreCase(pressSeverity(point));
     }
 
+    // 이상 후보들 중 대표 이벤트를 고르기 위한 가중치를 계산한다.
     private double anomalyWeight(PressAnomalyDetectionResponse.ChartPoint point) {
         if (point == null) {
             return -1.0;
@@ -249,6 +248,7 @@ public class PressAnomalyDetectionService {
         return weight;
     }
 
+    // 목표 사이클과 실제 사이클의 차이를 초 단위로 계산한다.
     private double cycleTimeGap(PressAnomalyDetectionResponse.ChartPoint point) {
         if (point == null || point.targetCycleTimeSec() == null || point.actualCycleTimeSec() == null) {
             return 0.0;
@@ -256,6 +256,7 @@ public class PressAnomalyDetectionService {
         return Math.abs(point.actualCycleTimeSec() - point.targetCycleTimeSec());
     }
 
+    // 사이클 편차와 생산 수 증가 상태를 반영해 최종 심각도를 정한다.
     private String pressSeverity(PressAnomalyDetectionResponse.ChartPoint point) {
         if (point == null) {
             return "NORMAL";
