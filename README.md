@@ -14,6 +14,7 @@
 - Kafka 기반 제조 이벤트 스트리밍 연동
 - Redis 기반 실시간 대시보드 캐시 연동
 
+&nbsp;
 ## ✨ 제조 주요 기능
 
 ### 공정별 이상 탐지 분석 (ISO 통계적 공정관리 적용)
@@ -21,6 +22,7 @@
 
 **ISO 표준 문서 및 통계적 공정관리(SPC) 원칙**에 따라 설비별 정상 데이터의 평균(μ)과 표준편차(σ)를 기반으로 동적 임계값을 생성하여 이상을 탐지합니다. (2σ 이내 정상, 2~3σ 경고, 3σ 초과 위험)
 
+&nbsp;
 ### 1. 프레스 공정 (Press)
 <img width="1890" height="567" alt="스크린샷(23)" src="https://github.com/user-attachments/assets/55b670c3-79e7-422b-ad40-cb2105a2a523" />
 
@@ -32,6 +34,7 @@
 - **생산 카운트 (`countIncreaseYn`):** `true` 시 정상, 데이터 누락(`null`) 시 경고, `false` 시 위험.
 - **설비 상태 (`operationStatus`):** `RUNNING` 정상, `WARNING` 경고, `STOPPED/FAULT` 위험.
 
+&nbsp;
 ### 2. 차체 공정 (Body)
 <img width="1887" height="773" alt="스크린샷(26)" src="https://github.com/user-attachments/assets/71c63375-1128-4b97-8820-a7d64ebb1666" />
 <img width="1845" height="436" alt="image" src="https://github.com/user-attachments/assets/25d1b4ff-49d4-433f-afaa-495b308b3ba4" />
@@ -42,6 +45,7 @@
 - **로봇 상태 (`robotMotionStatus`):** `NORMAL` 정상, `WARNING` 경고, `ABNORMAL` 또는 `COLLISION_RISK` 위험.
 - **운전 모드 (`robotOperationMode`):** 생산 중 `AUTO` 정상. 계획 없는 `MANUAL/STOPPED` 위험.
 
+&nbsp;
 ### 3. 도장 공정 (Paint)
 <img width="1882" height="837" alt="image" src="https://github.com/user-attachments/assets/cce03261-3b1a-490b-99ee-c1718ef87845" />
 <img width="1857" height="361" alt="image" src="https://github.com/user-attachments/assets/21d186a8-50e3-4643-8fe1-93512467e85e" />
@@ -52,12 +56,14 @@
 - **불량 점수 (`defectScore`):** 0.4 미만 정상, 0.4~0.6 경고, 0.6 이상 위험 (`visionLabel`이 정상이어도 점수에 따라 경고 발송).
 - **온도 편차 (`thermalStdTemp`):** 오븐 온도 균일도 기준에 따라 2℃ 미만 정상, 2~5℃ 경고, 5℃ 이상 위험.
 
+&nbsp;
 ### 4. 의장 공정 (Assembly)
 <img width="1890" height="817" alt="image" src="https://github.com/user-attachments/assets/6fdc0b6e-a7df-4e89-b196-35831e8a6e3f" />
 
 - **작업/조립 순서 오류 (`sequenceErrorCount`):** 실제 작업 순서(`actualSequence`)가 기준 순서(`expectedSequence`)와 불일치할 경우 위험(`CRITICAL`) 판정.
 - **부품 누락 (`missingPartCount`) 및 체결 오류 (`fasteningErrorCount`):** 1건이라도 발생 시 위험 판정.
 
+&nbsp;
 ### 제조 병목 탐지
 
 Bosch Production Line Performance Dataset의 Station 통과 시간, 공정 처리 시간, 대기 시간을 기반으로 병목 공정을 탐지합니다.
@@ -68,6 +74,7 @@ Bosch Production Line Performance Dataset의 Station 통과 시간, 공정 처�
 - 생산 대기열 증가
 - 공정별 지연 위험도 증가
 
+&nbsp;
 ### 공정 간 불량 전이 예측
 
 공정별 센서 데이터, 공정 이동 이력, 품질 검사 결과를 기반으로 특정 공정의 이상이 후속 공정의 불량으로 이어질 가능성을 예측합니다.
@@ -78,6 +85,7 @@ Bosch Production Line Performance Dataset의 Station 통과 시간, 공정 처�
 - 주요 원인 Station 및 Sensor Feature
 - 위험도 등급: `LOW`, `MEDIUM`, `HIGH`
 
+&nbsp;
 ## 📊 활용 데이터셋
 
 프로젝트의 AI 분석 신뢰도와 공정 모의(Simulation)를 위해 다음의 산업용 오픈 데이터셋을 활용합니다.
@@ -104,11 +112,11 @@ Kaggle에서 제공하는 대규모 제조 라인 성능 데이터셋으로, 공
   - Station 체류 시간 등을 분석하여 **제조 병목 공정 탐지**
   - 특정 공정의 센서 데이터가 후속 공정에 미치는 영향을 분석해 **공정 간 불량 전이 예측**
 
-
+&nbsp;
 ## 🛠 전체 데이터 기능 흐름
 <img width="10217" height="5316" alt="데이터 기능 흐름도" src="https://github.com/user-attachments/assets/02488ac3-03af-4d68-ae0a-96fbdced0e4a" />
 
-
+&nbsp;
 ## 🚀 이벤트 JSON 및 Kafka 처리 (상세 설계)
 
 ### 1. 원천 데이터베이스 설계
@@ -127,6 +135,7 @@ DB는 `sampledb`(샘플 원천 데이터)와 `maindb`(분석 결과 데이터)�
 - `dispatch_status`: `PENDING`(대기), `READY`(발행 가능), `SENT`(발행 완료), `BLOCKED`(설비 고장 대기), `SKIPPED`(진행 불가), `FAILED`
 - `analysis_status`: `NOT_ANALYZED`, `NORMAL`, `ABNORMAL`
 
+&nbsp;
 ### 2. 제조 Kafka Topic 구성
 
 제조 이벤트, 분석 결과, 설비 상태, 알림을 분리하기 위해 4개의 Topic을 운영합니다. 모든 Topic은 2개의 파티션으로 구성됩니다.
@@ -141,6 +150,7 @@ DB는 `sampledb`(샘플 원천 데이터)와 `maindb`(분석 결과 데이터)�
 
 * `carMasterId`를 Key로 사용함으로써 동일 차량의 이벤트 순서를 파티션 레벨에서 보장합니다.
 
+&nbsp;
 ### 3. 제조 Kafka Producer / Consumer 구성
 | Topic                    | Producer                                    | Consumer Group                                        |
 | ------------------------ | ------------------------------------------- | ----------------------------------------------------- |
@@ -150,6 +160,7 @@ DB는 `sampledb`(샘플 원천 데이터)와 `maindb`(분석 결과 데이터)�
 | `manufacturing.alert`    | 제조 이벤트 분석 Consumer                          | `alert-notification-consumer-group`                   |
 
 
+&nbsp;
 ### 4. Kafka 제조 이벤트 파이프라인 흐름도
 
 ```mermaid
@@ -193,6 +204,7 @@ flowchart TD
     ALERT_TOPIC --> ALERT_CG
 ```
 
+&nbsp;
 ### 5. Scheduler 및 Consumer 상세 로직
 
 **1) Scheduler 로직**
@@ -216,6 +228,7 @@ flowchart TD
 - `ManufacturingKafkaTestController`의 `/broker` API는 `KafkaDiagnosticsService`를 통해 실제 clusterId, broker 수, 토픽별 partition 수를 확인합니다.
 - `/messages`와 `/alerts` API는 현재 인스턴스가 본 Kafka 메시지 흐름을 eventId 또는 alert 기준으로 조회하는 진단용 엔드포인트입니다.
 
+&nbsp;
 ## 🔧 기술 스택
 
 <p align="left">
@@ -235,6 +248,7 @@ flowchart TD
   <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white" alt="Kubernetes" />
 </p>
 
+&nbsp;
 ## 로컬 실행 및 테스트
 
 ```bash
