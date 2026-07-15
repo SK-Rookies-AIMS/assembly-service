@@ -76,6 +76,14 @@ class PressAnomalyDetectionServiceTest {
         assertThat(response.metrics().riskScore()).isEqualTo(78.0);
         assertThat(response.alert().detected()).isTrue();
         assertThat(response.alert().title()).isNotBlank();
+        assertThat(response.alert().reasons())
+                .anySatisfy(reason -> {
+                    assertThat(reason).contains("EVT-20260601-000397");
+                    assertThat(reason).contains("targetCycleTimeSec");
+                    assertThat(reason).contains("actualCycleTimeSec");
+                    assertThat(reason).contains("cycleTimeGapSec");
+                    assertThat(reason).contains("severity=");
+                });
     }
 
     private PressAnalysisResult pressResult(String eventId, LocalDateTime eventTime, double riskScore) {

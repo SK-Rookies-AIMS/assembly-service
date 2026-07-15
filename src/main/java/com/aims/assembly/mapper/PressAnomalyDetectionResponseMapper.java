@@ -37,6 +37,17 @@ public final class PressAnomalyDetectionResponseMapper {
         return PressAnomalyDetectionResponse.ChartPoint.from(result);
     }
 
+    public static PressAnomalyDetectionResponse.ChartPoint toChartPoint(
+            PressAnalysisResult result,
+            String logNo
+    ) {
+        return PressAnomalyDetectionResponse.ChartPoint.from(
+                result,
+                result.getAnalysisResult().getEventTime(),
+                logNo
+        );
+    }
+
     public static PressAnomalyDetectionResponse.Metrics toMetrics(
             PressAnomalyDetectionResponse.ChartPoint point
     ) {
@@ -46,9 +57,10 @@ public final class PressAnomalyDetectionResponseMapper {
     public static PressAnomalyDetectionResponse.AlertPanel toAlert(
             Boolean detected,
             String title,
+            String logNo,
             List<String> reasons
     ) {
-        return new PressAnomalyDetectionResponse.AlertPanel(detected, title, reasons);
+        return new PressAnomalyDetectionResponse.AlertPanel(detected, title, logNo, reasons);
     }
 
     public static PressAnomalyDetectionResponse.Charts toCharts(List<PressAnomalyDetectionResponse.ChartPoint> points) {

@@ -5,6 +5,7 @@ import com.aims.assembly.domain.enums.Severity;
 import com.aims.assembly.dto.body.BodyAnomalyDetectionResponse;
 import com.aims.assembly.mapper.BodyAnomalyDetectionResponseMapper;
 import com.aims.assembly.repository.analysis.BodyAnalysisResultRepository;
+import com.aims.assembly.repository.event.AlertEventRepository;
 import com.aims.assembly.repository.event.ManufacturingEventJsonRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +25,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.stream.Collectors;
 import java.util.regex.Matcher;
@@ -35,7 +37,7 @@ import java.util.regex.Pattern;
 @Transactional(readOnly = true)
 public class BodyAnomalyDetectionService {
     private static final int MAX_EVENT_LOOKUP_SIZE = 10_000;
-    // ISO 13373/20816의 밴드별 진동 관리 원칙을 참고해 LOW/MID/HIGH 임계값을 분리한다.
+    // ISO 13373/20816 기준에 맞춰 차체 주파수 대역을 LOW / MID / HIGH 범위로 분류한다.
     private static final Pattern DETAILED_BAND_PATTERN = Pattern.compile("freq_(\\d+)_(\\d+)_hz", Pattern.CASE_INSENSITIVE);
     private static final Double ROBOT_VIBRATION_WARNING_LINE = 0.75;
     private static final Double ROBOT_VIBRATION_DANGER_LINE = 1.25;
@@ -47,6 +49,7 @@ public class BodyAnomalyDetectionService {
 
     private final BodyAnalysisResultRepository repository;
     private final ManufacturingEventJsonRepository eventJsonRepository;
+    private final AlertEventRepository alertEventRepository;
     private final ObjectMapper objectMapper;
 
     @Cacheable(
@@ -86,6 +89,13 @@ public class BodyAnomalyDetectionService {
                 .toList();
 
         List<BodyAnomalyDetectionResponse.ChartPoint> points = allPoints;
+        Map<String, String> logNoByEventId = resolveAlertLogNos(points.stream()
+                .map(BodyAnomalyDetectionResponse.ChartPoint::eventId)
+                .filter(eventId -> eventId != null && !eventId.isBlank())
+                .toList());
+        points = points.stream()
+                .map(point -> attachLogNo(point, logNoByEventId.get(point.eventId())))
+                .toList();
 
         boolean detected = points.stream().anyMatch(this::isBodyAnomaly);
         LocalDateTime previousEndAt = points.isEmpty() ? null : points.get(0).timestamp().minusNanos(1);
@@ -126,6 +136,7 @@ public class BodyAnomalyDetectionService {
                 .map(point -> BodyAnomalyDetectionResponseMapper.toRobotMetricPoint(
                         point.eventId(),
                         point.analysisId(),
+                        point.logNo(),
                         point.timestamp(),
                         point.robotVibrationScore(),
                         point.vibrationWarningLine(),
@@ -138,6 +149,7 @@ public class BodyAnomalyDetectionService {
                 .map(point -> BodyAnomalyDetectionResponseMapper.toPeakMetricPoint(
                         point.eventId(),
                         point.analysisId(),
+                        point.logNo(),
                         point.timestamp(),
                         point.frequencyPeakValue(),
                         point.vibrationRms(),
@@ -242,6 +254,7 @@ public class BodyAnomalyDetectionService {
         return BodyAnomalyDetectionResponseMapper.toChartPoint(
                 analysis.getEventId(),
                 analysis.getAnalysisId(),
+                null,
                 analysis.getEventTime(),
                 robotVibrationScore,
                 result.getFrequencyPeakValue(),
@@ -341,6 +354,86 @@ public class BodyAnomalyDetectionService {
         );
     }
 
+    private Map<String, String> resolveAlertLogNos(List<String> eventIds) {
+        if (eventIds == null || eventIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return alertEventRepository.findByEventIdIn(new LinkedHashSet<>(eventIds)).stream()
+                .collect(Collectors.toMap(
+                        event -> event.getEventId(),
+                        event -> event.getLogNo(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+    }
+
+    private BodyAnomalyDetectionResponse.ChartPoint attachLogNo(
+            BodyAnomalyDetectionResponse.ChartPoint point,
+            String logNo
+    ) {
+        if (point == null) {
+            return null;
+        }
+        return new BodyAnomalyDetectionResponse.ChartPoint(
+                point.eventId(),
+                point.analysisId(),
+                logNo,
+                point.timestamp(),
+                point.robotVibrationScore(),
+                point.frequencyPeakValue(),
+                point.vibrationPeak(),
+                point.vibrationWarningLine(),
+                point.vibrationDangerLine(),
+                point.peakWarningLine(),
+                point.peakDangerLine(),
+                point.vibrationRms(),
+                point.riskScore(),
+                point.isAbnormal(),
+                point.severity()
+        );
+    }
+
+    private BodyAnomalyDetectionResponse.RobotMetricPoint attachLogNo(
+            BodyAnomalyDetectionResponse.RobotMetricPoint point,
+            String logNo
+    ) {
+        if (point == null) {
+            return null;
+        }
+        return new BodyAnomalyDetectionResponse.RobotMetricPoint(
+                point.eventId(),
+                point.analysisId(),
+                logNo,
+                point.timestamp(),
+                point.value(),
+                point.warningLine(),
+                point.dangerLine(),
+                point.isAbnormal(),
+                point.severity()
+        );
+    }
+
+    private BodyAnomalyDetectionResponse.PeakMetricPoint attachLogNo(
+            BodyAnomalyDetectionResponse.PeakMetricPoint point,
+            String logNo
+    ) {
+        if (point == null) {
+            return null;
+        }
+        return new BodyAnomalyDetectionResponse.PeakMetricPoint(
+                point.eventId(),
+                point.analysisId(),
+                logNo,
+                point.timestamp(),
+                point.value(),
+                point.secondaryValue(),
+                point.warningLine(),
+                point.dangerLine(),
+                point.isAbnormal(),
+                point.severity()
+        );
+    }
     private Map<String, Double> parseFrequencyBands(String json) {
         if (json == null || json.isBlank()) {
             return new HashMap<>();
@@ -400,60 +493,67 @@ public class BodyAnomalyDetectionService {
             return List.of();
         }
 
-        return bands.entrySet().stream()
-                .filter(entry -> entry.getValue() != null)
+        Map<String, Double> summaryBands = summarizeFrequencyBands(bands);
+        List<BodyAnomalyDetectionResponse.FrequencyBandPoint> points = new ArrayList<>();
+        summaryBands.entrySet().stream()
                 .sorted(Comparator.comparingInt(entry -> frequencyBandOrder(entry.getKey())))
-                .map(entry -> BodyAnomalyDetectionResponseMapper.toFrequencyBandPoint(
-                        chartTime,
-                        localizeFrequencyBandLabel(entry.getKey()),
-                        entry.getValue(),
-                        thresholdForBand(entry.getKey()).target(),
-                        thresholdForBand(entry.getKey()).warning(),
-                        thresholdForBand(entry.getKey()).danger()
-                ))
-                .toList();
+                .forEach(entry -> {
+                    BandThreshold threshold = thresholdForBand(entry.getKey());
+                    points.add(BodyAnomalyDetectionResponseMapper.toFrequencyBandPoint(
+                            chartTime,
+                            localizeFrequencyBandKey(entry.getKey()),
+                            entry.getValue(),
+                            threshold.target(),
+                            threshold.warning(),
+                            threshold.danger()
+                    ));
+                });
+        return points;
     }
 
-    private List<BodyAnomalyDetectionResponse.FrequencyZonePoint> buildFrequencyZoneChart(Map<String, Double> rawBands) {
-        if (rawBands == null || rawBands.isEmpty()) {
+    private List<BodyAnomalyDetectionResponse.FrequencyZonePoint> buildFrequencyZoneChart(Map<String, Double> raw) {
+        if (raw == null || raw.isEmpty()) {
             return List.of();
         }
 
-        List<Double> zone1 = new ArrayList<>();
-        List<Double> zone2 = new ArrayList<>();
-        List<Double> zone3 = new ArrayList<>();
-        List<Double> zone4 = new ArrayList<>();
-        List<Double> zone5 = new ArrayList<>();
+        List<Double> lowVals = new ArrayList<>();
+        List<Double> mainVals = new ArrayList<>();
+        List<Double> highVals = new ArrayList<>();
+        List<Double> zone4Vals = new ArrayList<>();
+        List<Double> zone5Vals = new ArrayList<>();
 
-        for (Map.Entry<String, Double> entry : rawBands.entrySet()) {
-            Double value = entry.getValue();
-            if (value == null) {
+        for (Map.Entry<String, Double> entry : raw.entrySet()) {
+            Double val = entry.getValue();
+            if (val == null) {
                 continue;
             }
+
             int upperHz = extractUpperHz(entry.getKey());
             if (upperHz <= 0) {
                 continue;
             }
 
             if (upperHz <= 300) {
-                zone1.add(value);
+                lowVals.add(val);
             } else if (upperHz <= 600) {
-                zone2.add(value);
+                mainVals.add(val);
             } else if (upperHz <= 900) {
-                zone3.add(value);
+                highVals.add(val);
             } else if (upperHz <= 1200) {
-                zone4.add(value);
+                zone4Vals.add(val);
             } else if (upperHz <= 1600) {
-                zone5.add(value);
+                zone5Vals.add(val);
+            } else {
+                zone5Vals.add(val);
             }
         }
 
         return List.of(
-                buildFrequencyZonePoint("Zone 1", "0~300Hz", "저주파 / 기본 구조 진동", zone1),
-                buildFrequencyZonePoint("Zone 2", "301~600Hz", "로봇 본체 진동", zone2),
-                buildFrequencyZonePoint("Zone 3", "601~900Hz", "관절·감속기 진동", zone3),
-                buildFrequencyZonePoint("Zone 4", "901~1200Hz", "베어링·기계 이상 진동", zone4),
-                buildFrequencyZonePoint("Zone 5", "1201~1600Hz", "고주파 충격·충돌 위험", zone5)
+                buildFrequencyZonePoint("Zone 1", "0~300Hz", "로봇 진동 / 보호 대역", lowVals, LOW_BAND_THRESHOLD),
+                buildFrequencyZonePoint("Zone 2", "301~600Hz", "정상 동작 / 중간 절차 대역", mainVals, MID_BAND_THRESHOLD),
+                buildFrequencyZonePoint("Zone 3", "601~900Hz", "로봇 진동 감시 대역", highVals, HIGH_BAND_THRESHOLD),
+                buildFrequencyZonePoint("Zone 4", "901~1200Hz", "고주파 진동 집중 감시 대역", zone4Vals, HIGH_BAND_THRESHOLD),
+                buildFrequencyZonePoint("Zone 5", "1201~1600Hz", "초고주파 충격 / 충돌 위험 대역", zone5Vals, HIGH_BAND_THRESHOLD)
         );
     }
 
@@ -465,7 +565,8 @@ public class BodyAnomalyDetectionService {
         List<Double> lowVals = new ArrayList<>();
         List<Double> mainVals = new ArrayList<>();
         List<Double> highVals = new ArrayList<>();
-        List<Double> ultraVals = new ArrayList<>();
+        List<Double> zone4Vals = new ArrayList<>();
+        List<Double> zone5Vals = new ArrayList<>();
 
         for (Map.Entry<String, Double> entry : raw.entrySet()) {
             Double val = entry.getValue();
@@ -480,8 +581,12 @@ public class BodyAnomalyDetectionService {
                 mainVals.add(val);
             } else if (upperHz <= 900) {
                 highVals.add(val);
+            } else if (upperHz <= 1200) {
+                zone4Vals.add(val);
+            } else if (upperHz <= 1600) {
+                zone5Vals.add(val);
             } else {
-                ultraVals.add(val);
+                zone5Vals.add(val);
             }
         }
 
@@ -489,7 +594,8 @@ public class BodyAnomalyDetectionService {
                 computeZoneStats(lowVals),
                 computeZoneStats(mainVals),
                 computeZoneStats(highVals),
-                computeZoneStats(ultraVals)
+                computeZoneStats(zone4Vals),
+                computeZoneStats(zone5Vals)
         );
     }
 
@@ -497,7 +603,8 @@ public class BodyAnomalyDetectionService {
             String zone,
             String range,
             String description,
-            List<Double> values
+            List<Double> values,
+            BandThreshold threshold
     ) {
         BodyAnomalyDetectionResponse.FrequencyZoneAnalysis.ZoneStats stats = computeZoneStats(values);
         return BodyAnomalyDetectionResponseMapper.toFrequencyZonePoint(
@@ -506,9 +613,9 @@ public class BodyAnomalyDetectionService {
                 description,
                 stats.avg(),
                 stats.max(),
-                MID_BAND_THRESHOLD.target(),
-                MID_BAND_THRESHOLD.warning(),
-                MID_BAND_THRESHOLD.danger()
+                threshold.target(),
+                threshold.warning(),
+                threshold.danger()
         );
     }
 
@@ -632,8 +739,9 @@ public class BodyAnomalyDetectionService {
         };
     }
 
+    // 주파수 대역 키를 LOW / MID / HIGH 임계값 세트로 변환한다.
     private BandThreshold thresholdForBand(String rawKey) {
-        // 상세 주파수 키가 아니라도, ISO 기준처럼 대역별 정상 범위를 먼저 적용한다.
+        // 해석된 대역명을 ISO 기준 임계값 세트에 매핑한다.
         String normalized = rawKey == null ? "" : rawKey.trim().toUpperCase(Locale.ROOT);
         if (normalized.contains("LOW")) {
             return LOW_BAND_THRESHOLD;
@@ -694,6 +802,7 @@ public class BodyAnomalyDetectionService {
         return bestBand;
     }
 
+    // 개별 신호를 합쳐 차체 최종 심각도 문자열을 만든다.
     private String bodySeverity(
             String motionStatus,
             String operationMode,
@@ -704,7 +813,7 @@ public class BodyAnomalyDetectionService {
             Double riskScore,
             boolean analysisAbnormal
     ) {
-        // 로봇 상태 + 운전 모드 + 주파수 피크를 합산해 차체 이상 등급을 정한다.
+        // 동작 상태, 운전 모드, 주파수 대역, 분석 위험도를 합쳐 최종 심각도를 계산한다.
         SeverityLevel severity = SeverityLevel.NORMAL;
         severity = SeverityLevel.max(severity, motionSeverity(motionStatus));
         severity = SeverityLevel.max(severity, operationSeverity(operationMode));
@@ -772,10 +881,10 @@ public class BodyAnomalyDetectionService {
     private BodyAnomalyDetectionResponse.AlertPanel toAlert(
             List<BodyAnomalyDetectionResponse.ChartPoint> points,
             boolean detected,
-            BodyAnalysisResult summaryResult
+        BodyAnalysisResult summaryResult
     ) {
         if (!detected || points == null || points.isEmpty()) {
-            return BodyAnomalyDetectionResponseMapper.toAlert(false, "차체 이상 탐지 미검출", List.of());
+            return BodyAnomalyDetectionResponseMapper.toAlert(false, "차체 이상 탐지 미검출", null, List.of());
         }
 
         List<String> reasons = new ArrayList<>();
@@ -783,8 +892,12 @@ public class BodyAnomalyDetectionService {
         double maxRobotVibrationScore = 0.0;
 
         for (BodyAnomalyDetectionResponse.ChartPoint point : points) {
-            if (!isBodyAnomaly(point)) continue;
-            if (!"NORMAL".equalsIgnoreCase(point.severity()) || Boolean.TRUE.equals(point.isAbnormal())) abnormalCount++;
+            if (!isBodyAnomaly(point)) {
+                continue;
+            }
+            if (!"NORMAL".equalsIgnoreCase(point.severity()) || Boolean.TRUE.equals(point.isAbnormal())) {
+                abnormalCount++;
+            }
             if (point.robotVibrationScore() != null) {
                 maxRobotVibrationScore = Math.max(maxRobotVibrationScore, point.robotVibrationScore());
             }
@@ -792,32 +905,36 @@ public class BodyAnomalyDetectionService {
 
         if (summaryResult != null) {
             if ("COLLISION_RISK".equals(summaryResult.getRobotMotionStatus())) {
-                reasons.add("로봇 진동 상태 = 충돌 위험");
-            } else if (summaryResult.getRobotMotionStatus() != null
-                    && !"NORMAL".equals(summaryResult.getRobotMotionStatus())) {
-                reasons.add("로봇 진동 상태 = " + localizeRobotMotionStatus(summaryResult.getRobotMotionStatus()));
+                reasons.add("로봇 진동 상태: 충돌 위험");
+            } else if (summaryResult.getRobotMotionStatus() != null && !"NORMAL".equals(summaryResult.getRobotMotionStatus())) {
+                reasons.add("로봇 진동 상태: " + localizeRobotMotionStatus(summaryResult.getRobotMotionStatus()));
             }
             if ("AUTO_MANUAL_STOPPED".equals(summaryResult.getRobotOperationMode())
                     || "STOPPED".equals(summaryResult.getRobotOperationMode())
                     || "MANUAL".equals(summaryResult.getRobotOperationMode())) {
-                reasons.add("로봇 동작 모드 = " + localizeRobotOperationMode(summaryResult.getRobotOperationMode()));
+                reasons.add("로봇 동작 모드: " + localizeRobotOperationMode(summaryResult.getRobotOperationMode()));
             }
             if (summaryResult.getFrequencyPeakValue() != null && summaryResult.getFrequencyPeakValue() > 0) {
-                reasons.add(String.format("피크 진동 증가 (%.6f mm/s)", summaryResult.getFrequencyPeakValue()));
+                reasons.add(String.format("주파수 피크 증가: %.6f mm/s", summaryResult.getFrequencyPeakValue()));
             }
             if (summaryResult.getFrequencyPeakBand() != null) {
-                reasons.add("주파수 피크 대역 = " + localizeFrequencyPeakBand(summaryResult.getFrequencyPeakBand()));
+                reasons.add("주파수 피크 대역: " + localizeFrequencyPeakBand(summaryResult.getFrequencyPeakBand()));
             }
         }
 
         if (abnormalCount > 0) {
-            reasons.add("이상 탐지 건수 = " + abnormalCount);
+            reasons.add("이상 탐지 건수: " + abnormalCount);
         }
         if (maxRobotVibrationScore > 0) {
-            reasons.add(String.format("최대 로봇 진동 점수 = %.2f", maxRobotVibrationScore));
+            reasons.add(String.format("최대 로봇 진동 가속도: %.4f", maxRobotVibrationScore));
         }
 
-        return BodyAnomalyDetectionResponseMapper.toAlert(true, "차체 이상이 감지되었습니다", List.copyOf(reasons));
+        String logNo = summaryResult == null ? null : resolveAlertLogNo(summaryResult.getAnalysisResult().getEventId());
+        return BodyAnomalyDetectionResponseMapper.toAlert(true, "차체 이상 탐지 경고", logNo, List.copyOf(reasons));
+    }
+
+    private String resolveAlertLogNo(String eventId) {
+        return alertEventRepository.findLogNoByEventId(eventId).orElse(null);
     }
 
     private String formatFrequencyBand(String raw) {
@@ -830,6 +947,7 @@ public class BodyAnomalyDetectionService {
         };
     }
 
+    // 로봇 이동 상태를 기준으로 경고/위험 심각도를 판정한다.
     private SeverityLevel motionSeverity(String motionStatus) {
         if (motionStatus == null || motionStatus.isBlank()) {
             return SeverityLevel.WARNING;
@@ -842,6 +960,7 @@ public class BodyAnomalyDetectionService {
         };
     }
 
+    // 동작 모드를 기준으로 정상/경고 심각도를 판정한다.
     private SeverityLevel operationSeverity(String operationMode) {
         if (operationMode == null || operationMode.isBlank()) {
             return SeverityLevel.WARNING;
@@ -853,12 +972,13 @@ public class BodyAnomalyDetectionService {
         };
     }
 
+    // 주파수 피크 값과 대역 임계값을 비교해 이상 심각도를 계산한다.
     private SeverityLevel frequencySeverity(
             String frequencyPeakBand,
             Map<String, Double> frequencyBands,
             Double frequencyPeakValue
     ) {
-        // 주파수 피크는 밴드별 정상/경고/위험 임계값을 따로 둔다.
+        // 대역별 피크 임계값으로 경고 / 위험 심각도를 판정한다.
         if (frequencyPeakValue == null || frequencyPeakValue <= 0.0) {
             return SeverityLevel.NORMAL;
         }
@@ -874,8 +994,9 @@ public class BodyAnomalyDetectionService {
         return SeverityLevel.NORMAL;
     }
 
+    // 차체 이상 판단에 쓰는 핵심 신호를 종합해 anomaly 여부를 결정한다.
     private boolean isBodyAnomaly(BodyAnomalyDetectionResponse.ChartPoint point) {
-        // 차체는 severity, analysis abnormal, risk score 중 하나만 이상이어도 anomaly로 본다.
+        // severity, abnormal 플래그, risk score 중 하나라도 기준을 넘으면 이상으로 본다.
         return point != null
                 && (!"NORMAL".equalsIgnoreCase(point.severity())
                 || Boolean.TRUE.equals(point.isAbnormal())

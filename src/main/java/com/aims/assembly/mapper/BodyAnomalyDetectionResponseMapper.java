@@ -37,6 +37,7 @@ public final class BodyAnomalyDetectionResponseMapper {
     public static BodyAnomalyDetectionResponse.ChartPoint toChartPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double robotVibrationScore,
             Double frequencyPeakValue,
@@ -53,6 +54,7 @@ public final class BodyAnomalyDetectionResponseMapper {
         return new BodyAnomalyDetectionResponse.ChartPoint(
                 eventId,
                 analysisId,
+                logNo,
                 timestamp,
                 robotVibrationScore,
                 frequencyPeakValue,
@@ -71,6 +73,7 @@ public final class BodyAnomalyDetectionResponseMapper {
     public static BodyAnomalyDetectionResponse.RobotMetricPoint toRobotMetricPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double value,
             Double warningLine,
@@ -81,6 +84,7 @@ public final class BodyAnomalyDetectionResponseMapper {
         return new BodyAnomalyDetectionResponse.RobotMetricPoint(
                 eventId,
                 analysisId,
+                logNo,
                 timestamp,
                 value,
                 warningLine,
@@ -93,6 +97,7 @@ public final class BodyAnomalyDetectionResponseMapper {
     public static BodyAnomalyDetectionResponse.PeakMetricPoint toPeakMetricPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double value,
             Double secondaryValue,
@@ -104,6 +109,7 @@ public final class BodyAnomalyDetectionResponseMapper {
         return new BodyAnomalyDetectionResponse.PeakMetricPoint(
                 eventId,
                 analysisId,
+                logNo,
                 timestamp,
                 value,
                 secondaryValue,
@@ -218,8 +224,9 @@ public final class BodyAnomalyDetectionResponseMapper {
     public static BodyAnomalyDetectionResponse.AlertPanel toAlert(
             Boolean detected,
             String title,
+            String logNo,
             List<String> reasons
     ) {
-        return new BodyAnomalyDetectionResponse.AlertPanel(detected, title, reasons);
+        return new BodyAnomalyDetectionResponse.AlertPanel(detected, title, logNo, reasons);
     }
 }

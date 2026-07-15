@@ -64,6 +64,7 @@ public record PressAnomalyDetectionResponse(
     public record CycleTimePoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double targetCycleTimeSec,
             Double actualCycleTimeSec,
@@ -78,6 +79,7 @@ public record PressAnomalyDetectionResponse(
     public record DelayPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double cycleTimeGapSec,
             Boolean countIncreaseYn,
@@ -91,6 +93,7 @@ public record PressAnomalyDetectionResponse(
     public record ChartPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double targetCycleTimeSec,
             Double actualCycleTimeSec,
@@ -103,10 +106,14 @@ public record PressAnomalyDetectionResponse(
             Double dangerCycleTimeGapSec
     ) {
         public static ChartPoint from(PressAnalysisResult result) {
-            return from(result, result.getAnalysisResult().getEventTime());
+            return from(result, result.getAnalysisResult().getEventTime(), null);
         }
 
         public static ChartPoint from(PressAnalysisResult result, LocalDateTime eventJsonEventTime) {
+            return from(result, eventJsonEventTime, null);
+        }
+
+        public static ChartPoint from(PressAnalysisResult result, LocalDateTime eventJsonEventTime, String logNo) {
             var analysis = result.getAnalysisResult();
             Double score = analysis.getRiskScore();
             boolean isAbnormal = Boolean.TRUE.equals(analysis.getIsAbnormal());
@@ -114,6 +121,7 @@ public record PressAnomalyDetectionResponse(
             return new ChartPoint(
                     analysis.getEventId(),
                     analysis.getAnalysisId(),
+                    logNo,
                     eventJsonEventTime,
                     result.getTargetCycleTimeSec(),
                     result.getActualCycleTimeSec(),
@@ -131,6 +139,7 @@ public record PressAnomalyDetectionResponse(
     public record AlertPanel(
             Boolean detected,
             String title,
+            String logNo,
             List<String> reasons
     ) {
     }
@@ -200,6 +209,7 @@ public record PressAnomalyDetectionResponse(
         return new CycleTimePoint(
                 point.eventId(),
                 point.analysisId(),
+                point.logNo(),
                 point.timestamp(),
                 point.targetCycleTimeSec(),
                 point.actualCycleTimeSec(),
@@ -215,6 +225,7 @@ public record PressAnomalyDetectionResponse(
         return new DelayPoint(
                 point.eventId(),
                 point.analysisId(),
+                point.logNo(),
                 point.timestamp(),
                 point.cycleTimeGapSec(),
                 point.countIncreaseYn(),
