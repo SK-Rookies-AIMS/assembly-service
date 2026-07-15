@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ManufacturingAlertEventJsonTest {
 
     @Test
-    void serializesImageUrlInFinalKafkaPayload() {
+    void excludesImageUrlFromFinalKafkaPayload() {
         ManufacturingAlertEvent event = new ManufacturingAlertEvent(
                 "ALT-1",
                 "EVT-1",
@@ -33,14 +33,11 @@ class ManufacturingAlertEventJsonTest {
                 "OPEN",
                 true,
                 List.of("FAULT"),
-                "설비 확인",
-                "s3://event-image-858507113889-ap-northeast-2-an/press_1.png"
+                "설비 확인"
         );
 
         String json = new ObjectMapper().writeValueAsString(event);
 
-        assertThat(json).contains(
-                "\"imageUrl\":\"s3://event-image-858507113889-ap-northeast-2-an/press_1.png\""
-        );
+        assertThat(json).doesNotContain("imageUrl");
     }
 }

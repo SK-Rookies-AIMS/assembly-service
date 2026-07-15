@@ -61,7 +61,7 @@ class ManufacturingKafkaProducerTest {
     private KafkaMessageTraceStore traceStore;
 
     @Test
-    void publishesAlertEvenWhenImageMappingIsMissing() {
+    void publishesAlertWithoutImageUrl() {
         ManufacturingKafkaProducer producer = new ManufacturingKafkaProducer(
                 kafkaTemplate,
                 new ObjectMapper(),
@@ -88,8 +88,7 @@ class ManufacturingKafkaProducerTest {
                 "OPEN",
                 true,
                 List.of("reason"),
-                "check",
-                null
+                "check"
         );
         when(kafkaTemplate.send(
                 eq("factory.manufacturing.alert"),
@@ -107,7 +106,7 @@ class ManufacturingKafkaProducerTest {
                 eq("ALT-NO-IMAGE"),
                 payloadCaptor.capture()
         );
-        assertThat(payloadCaptor.getValue()).contains("\"imageUrl\":null");
+        assertThat(payloadCaptor.getValue()).doesNotContain("imageUrl");
         assertThat(result.topic()).isEqualTo("factory.manufacturing.alert");
     }
 

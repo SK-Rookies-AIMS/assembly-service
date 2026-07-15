@@ -297,12 +297,7 @@ public class ManufacturingEventAnalyzer {
                 "OPEN",
                 true,
                 analysis.reason().detailReasons(),
-                analysis.recommendation().message(),
-                AlertImageUrlResolver.resolve(
-                        analysis.processCode(),
-                        alertType,
-                        analysis.riskLevel()
-                )
+                analysis.recommendation().message()
         );
     }
 
@@ -335,12 +330,7 @@ public class ManufacturingEventAnalyzer {
                 "OPEN",
                 true,
                 List.of(statusReason),
-                "설비 상태를 즉시 확인하고 안전 절차를 따르세요.",
-                AlertImageUrlResolver.resolve(
-                        event.processCode(),
-                        alertType,
-                        riskLevel
-                )
+                "설비 상태를 즉시 확인하고 안전 절차를 따르세요."
         );
     }
 
