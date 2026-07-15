@@ -133,12 +133,12 @@ DB는 `sampledb`(샘플 원천 데이터)와 `maindb`(분석 결과 데이터)�
 
 | Topic | 역할 | Producer | Consumer Group | Message Key |
 | --- | --- | --- | --- | --- |
-| `factory.manufacturing.raw` | 원천 제조 이벤트 전달 | Scheduler | `manufacturing-consumer-group`, `ai-consumer-group`, `main-agv-group` | `carId` |
-| `factory.manufacturing.analysis` | 공정/AI 분석 결과 전달 | Manufacturing / AI Service | `analysis-consumer-group` | `carId` |
-| `factory.equipment.status` | 설비 상태 변경 이벤트 전달 | Equipment Service 등 | `equipment-consumer-group` | `equipmentCode` |
-| `factory.manufacturing.alert` | 이상/위험 알림 이벤트 전달 | 각 도메인 Service | `alert-consumer-group` | `carId` |
+| `factory.manufacturing.raw` | 원천 제조 이벤트 전달 | `ManufacturingRawEventService`, `ManufacturingEventReplayScheduler`, `ManufacturingKafkaTestController` | `manufacturing-consumer-group`, `ai-consumer-group` | `carMasterId` |
+| `factory.manufacturing.analysis` | 공정/AI 분석 결과 전달 | `ManufacturingKafkaConsumer` | `alert-analysis-consumer-group` | `carMasterId` |
+| `factory.equipment.status` | 설비 상태 변경 이벤트 전달 | `ManufacturingKafkaConsumer`, `EquipmentStateKafkaListener` | `dashboard-consumer-group` | `equipmentId` 우선, 없으면 `equipmentCode` |
+| `factory.manufacturing.alert` | 이상/위험 알림 이벤트 전달 | `ManufacturingKafkaConsumer` | `alert-notification-consumer-group` | `alertId` |
 
-* `carId`를 Key로 사용함으로써 동일 차량의 이벤트 순서를 파티션 레벨에서 보장합니다.
+* `carMasterId`를 Key로 사용함으로써 동일 차량의 이벤트 순서를 파티션 레벨에서 보장합니다.
 
 ### 3. Kafka 제조 이벤트 파이프라인 흐름도
 
@@ -150,29 +150,26 @@ flowchart TD
         REPLAY[ManufacturingEventReplayScheduler<br/>READY 상태 조회 & 설비 RUNNING 확인]
     end
 
-    RAW_TOPIC[["Topic: factory.manufacturing.raw<br/>(Partitions: 2, Key: carId)"]]
+    RAW_TOPIC[["Topic: factory.manufacturing.raw<br/>(Partitions: 2, Key: carMasterId)"]]
 
     subgraph CONSUMERS [Event Consumers]
         MANUFACTURING_CG["manufacturing-consumer-group<br/>(Press/Body/Paint/Assembly 분석)"]
         AI_CG["ai-consumer-group<br/>(병목/불량 전이 AI 분석)"]
-        AGV_CG["main-agv-group<br/>(물류/AGV 연동)"]
     end
 
-    ANALYSIS_TOPIC[["Topic: factory.manufacturing.analysis<br/>(Key: carId)"]]
-    EQUIPMENT_TOPIC[["Topic: factory.equipment.status<br/>(Key: equipmentCode)"]]
-    ALERT_TOPIC[["Topic: factory.manufacturing.alert<br/>(Key: carId)"]]
+    ANALYSIS_TOPIC[["Topic: factory.manufacturing.analysis<br/>(Key: carMasterId)"]]
+    EQUIPMENT_TOPIC[["Topic: factory.equipment.status<br/>(Key: equipmentId/equipmentCode)"]]
+    ALERT_TOPIC[["Topic: factory.manufacturing.alert<br/>(Key: alertId)"]]
 
-    ANALYSIS_CG["analysis-consumer-group<br/>대시보드 표시"]
-    EQUIPMENT_CG["equipment-consumer-group<br/>상태 이력 기록"]
-    ALERT_CG["alert-consumer-group<br/>실시간 WebSocket 알림"]
+    ANALYSIS_CG["alert-analysis-consumer-group<br/>분석 결과 알림"]
+    EQUIPMENT_CG["dashboard-consumer-group<br/>상태 이력 기록"]
+    ALERT_CG["alert-notification-consumer-group<br/>실시간 WebSocket 알림"]
 
     DB --> REPLAY
     REPLAY -->|조건 충족 시 발송| RAW_TOPIC
 
     RAW_TOPIC --> MANUFACTURING_CG
     RAW_TOPIC --> AI_CG
-    RAW_TOPIC --> AGV_CG
-
     MANUFACTURING_CG -->|정상 시 다음 공정 DB 업데이트<br/>분석 결과 발행| ANALYSIS_TOPIC
     AI_CG -->|분석 결과 발행| ANALYSIS_TOPIC
 
@@ -189,16 +186,25 @@ flowchart TD
 ### 4. Scheduler 및 Consumer 상세 로직
 
 **1) Scheduler 로직**
-- `manufacturing_event_json`에서 `dispatch_status = 'READY'`인 이벤트를 조회합니다.
-- 해당 설비의 현재 `operation_status`가 `RUNNING`인지 확인합니다.
-- 정상이면 `factory.manufacturing.raw`로 이벤트를 발행하고 `is_sent=1`, `dispatch_status='SENT'`로 업데이트합니다.
-- 설비가 고장(`FAULT`, `STOPPED`)이면 `BLOCKED` 처리하고 발행하지 않습니다.
+- `app.kafka.scheduler.enabled=true`일 때만 자동 재생 스케줄러가 동작합니다.
+- `ManufacturingEventReplayScheduler`가 `READY` 이벤트를 배치로 조회하고, `ManufacturingRawEventService`가 `FOR UPDATE SKIP LOCKED`로 잠근 뒤 발행합니다.
+- 원천 이벤트는 `dispatch_status='READY'`, `is_sent=0`, `retry_count < maxRetries` 조건을 만족할 때만 발행합니다.
+- 전송 성공 시에만 `dispatch_status='SENT'`, `is_sent=1`, `event_time=현재 시각`으로 갱신합니다.
+- 전송 실패 시에는 `retry_count`를 증가시키고 `error_message`를 남깁니다.
 
 **2) Consumer (제조 공정 로직)**
 - `manufacturing-consumer-group`은 이벤트를 소비하고 `processCode`에 따라 분기합니다. (예: `PRESS` -> `PressAnalysisService`)
-- 분석 결과가 **정상(NORMAL)**인 경우: 현재 이벤트를 `NORMAL`로 기록하고, **해당 차량의 다음 공정 이벤트를 `READY`로 업데이트**합니다.
-- 분석 결과가 **이상(ABNORMAL)**인 경우: 다음 공정을 `READY`로 바꾸지 않고 해당 차량을 `HOLD` 또는 `DEFECT` 상태로 전환합니다.
-- 설비 상태 변화나 이상이 발견되면 각각 설비 토픽 및 알림 토픽으로 후속 이벤트를 비동기 발행합니다.
+- 분석 결과가 `NORMAL`인 경우에는 현재 이벤트의 `analysis_status`를 `NORMAL`로 기록하고, 다음 공정이 진행 가능하도록 후속 상태를 갱신합니다.
+- 분석 결과가 `ABNORMAL`인 경우에는 후속 공정을 `READY`로 바꾸지 않고 해당 차량을 `HOLD` 또는 `DEFECT` 상태로 전환합니다.
+- `ai-consumer-group`은 병목 분석과 불량 전이 예측을 수행하고, `alert-analysis-consumer-group`이 `WARNING/CRITICAL` 결과에 대해 추가 알림을 발행합니다.
+- `dashboard-consumer-group`은 설비 상태 이벤트를 반영하고, `RECOVERED`면 blocked 이벤트를 복구하며 `FAULT`면 `READY` 이벤트를 차단합니다.
+- `alert-notification-consumer-group`은 최종 알림 이벤트를 소비합니다.
+- 다음 공정 `READY` 전환은 Kafka 소비만으로 끝나지 않고 `AgvArrivalService.handleArrival(eventId)` 같은 별도 도착 처리에서 마무리됩니다.
+
+**3) 추적 및 진단**
+- `KafkaMessageTraceStore`는 현재 Pod 메모리에 최근 200건의 PRODUCED/CONSUMED trace만 보관합니다.
+- `ManufacturingKafkaTestController`의 `/broker` API는 `KafkaDiagnosticsService`를 통해 실제 clusterId, broker 수, 토픽별 partition 수를 확인합니다.
+- `/messages`와 `/alerts` API는 현재 인스턴스가 본 Kafka 메시지 흐름을 eventId 또는 alert 기준으로 조회하는 진단용 엔드포인트입니다.
 
 ## 🔧 기술 스택
 
@@ -207,13 +213,14 @@ flowchart TD
   <img src="https://img.shields.io/badge/Spring%20Boot-6DB33F?style=for-the-badge&logo=springboot&logoColor=white" alt="Spring Boot" />
   <img src="https://img.shields.io/badge/Gradle-02303A?style=for-the-badge&logo=gradle&logoColor=white" alt="Gradle" />
   <img src="https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white" alt="MySQL" />
-  <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis" />
-  <img src="https://img.shields.io/badge/Kafka-231F20?style=for-the-badge&logo=apachekafka&logoColor=white" alt="Kafka" />
   <img src="https://img.shields.io/badge/JPA-Hibernate-59666C?style=for-the-badge&logo=hibernate&logoColor=white" alt="JPA Hibernate" />
   <img src="https://img.shields.io/badge/Spring%20Security-6DB33F?style=for-the-badge&logo=springsecurity&logoColor=white" alt="Spring Security" />
   <img src="https://img.shields.io/badge/JWT-000000?style=for-the-badge&logo=jsonwebtokens&logoColor=white" alt="JWT" />
   <img src="https://img.shields.io/badge/Swagger%20%2F%20OpenAPI-85EA2D?style=for-the-badge&logo=swagger&logoColor=black" alt="Swagger OpenAPI" />
   <img src="https://img.shields.io/badge/QueryDSL-0094F5?style=for-the-badge&logo=querydsl&logoColor=white" alt="QueryDSL" />
+  <img src="https://img.shields.io/badge/Kafka-231F20?style=for-the-badge&logo=apachekafka&logoColor=white" alt="Kafka" />
+  <img src="https://img.shields.io/badge/Elasticsearch-005571?style=for-the-badge&logo=elasticsearch&logoColor=white" alt="Elasticsearch" />
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis" />
   <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white" alt="Kubernetes" />
 </p>
