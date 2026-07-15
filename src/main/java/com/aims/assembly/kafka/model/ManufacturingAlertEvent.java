@@ -35,8 +35,7 @@ public record ManufacturingAlertEvent(
         String alertStatus,
         boolean needAction,
         List<String> reason,
-        String recommendedAction,
-        String imageUrl
+        String recommendedAction
 ) {
     public static final String TYPE_MANUFACTURING_ABNORMAL = "MANUFACTURING_ABNORMAL";
     public static final String TYPE_EQUIPMENT_ABNORMAL = "EQUIPMENT_ABNORMAL";
