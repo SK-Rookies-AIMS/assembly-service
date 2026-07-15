@@ -127,20 +127,30 @@ DB는 `sampledb`(샘플 원천 데이터)와 `maindb`(분석 결과 데이터)�
 - `dispatch_status`: `PENDING`(대기), `READY`(발행 가능), `SENT`(발행 완료), `BLOCKED`(설비 고장 대기), `SKIPPED`(진행 불가), `FAILED`
 - `analysis_status`: `NOT_ANALYZED`, `NORMAL`, `ABNORMAL`
 
-### 2. Kafka Topic 구성
+### 2. 제조 Kafka Topic 구성
 
 제조 이벤트, 분석 결과, 설비 상태, 알림을 분리하기 위해 4개의 Topic을 운영합니다. 모든 Topic은 2개의 파티션으로 구성됩니다.
 
-| Topic | 역할 | Producer | Consumer Group | Message Key |
-| --- | --- | --- | --- | --- |
-| `factory.manufacturing.raw` | 원천 제조 이벤트 전달 | `ManufacturingRawEventService`, `ManufacturingEventReplayScheduler`, `ManufacturingKafkaTestController` | `manufacturing-consumer-group`, `ai-consumer-group` | `carMasterId` |
-| `factory.manufacturing.analysis` | 공정/AI 분석 결과 전달 | `ManufacturingKafkaConsumer` | `alert-analysis-consumer-group` | `carMasterId` |
-| `factory.equipment.status` | 설비 상태 변경 이벤트 전달 | `ManufacturingKafkaConsumer`, `EquipmentStateKafkaListener` | `dashboard-consumer-group` | `equipmentId` 우선, 없으면 `equipmentCode` |
-| `factory.manufacturing.alert` | 이상/위험 알림 이벤트 전달 | `ManufacturingKafkaConsumer` | `alert-notification-consumer-group` | `alertId` |
+| Topic                            | 역할              | Message Key                      |
+| -------------------------------- | --------------- | -------------------------------- |
+| `factory.manufacturing.raw`      | 원천 제조 이벤트 전달    | `carMasterId`                    |
+| `factory.manufacturing.analysis` | 공정·AI 분석 결과 전달  | `carMasterId`                    |
+| `factory.equipment.status`       | 설비 상태 변경 이벤트 전달 | `equipmentId` 또는 `equipmentCode` |
+| `factory.manufacturing.alert`    | 이상·위험 알림 이벤트 전달 | `alertId`                        |
+
 
 * `carMasterId`를 Key로 사용함으로써 동일 차량의 이벤트 순서를 파티션 레벨에서 보장합니다.
 
-### 3. Kafka 제조 이벤트 파이프라인 흐름도
+### 3. 제조 Kafka Producer / Consumer 구성
+| Topic                    | Producer                                    | Consumer Group                                        |
+| ------------------------ | ------------------------------------------- | ----------------------------------------------------- |
+| `manufacturing.raw`      | 제조 이벤트 서비스<br>이벤트 재생 스케줄러<br>Kafka 테스트 컨트롤러 | `manufacturing-consumer-group`<br>`ai-consumer-group` |
+| `manufacturing.analysis` | 제조 이벤트 분석 Consumer                          | `alert-analysis-consumer-group`                       |
+| `equipment.status`       | 제조 이벤트 분석 Consumer<br>설비 상태 Listener        | `dashboard-consumer-group`                            |
+| `manufacturing.alert`    | 제조 이벤트 분석 Consumer                          | `alert-notification-consumer-group`                   |
+
+
+### 4. Kafka 제조 이벤트 파이프라인 흐름도
 
 ```mermaid
 flowchart TD
@@ -183,7 +193,7 @@ flowchart TD
     ALERT_TOPIC --> ALERT_CG
 ```
 
-### 4. Scheduler 및 Consumer 상세 로직
+### 5. Scheduler 및 Consumer 상세 로직
 
 **1) Scheduler 로직**
 - `app.kafka.scheduler.enabled=true`일 때만 자동 재생 스케줄러가 동작합니다.
