@@ -1,5 +1,5 @@
 # AIMS - Assembly Service
-
+### AIMS (Auto Intelligence Manufacturing System) - AI 기반 자동차 스마트팩토리 관제 시스템
 `assembly-service`는 SK 쉴더스 루키즈 개발 5기 **AI 기반 자동차 스마트팩토리 관제 시스템 AIMS**에서 제조 공정 이벤트를 수집하고, 공정/설비/품질 분석 결과를 대시보드에 제공하는 Spring Boot 기반 백엔드 서비스입니다.
 
 제조 서비스는 프레스·차체·도장·의장 조립 공정에서 발생해 Kafka로 발행된 이벤트를 수집하고, 생산 이벤트와 센서 데이터를 기반으로 이상을 탐지·저장·조회하는 역할을 담당합니다.
