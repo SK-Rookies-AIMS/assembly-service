@@ -11,6 +11,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -33,7 +34,7 @@ import java.util.regex.Pattern;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 @Transactional(readOnly = true)
 public class BodyAnomalyDetectionService {
     private static final int MAX_EVENT_LOOKUP_SIZE = 10_000;
@@ -52,9 +53,17 @@ public class BodyAnomalyDetectionService {
     private final AlertEventRepository alertEventRepository;
     private final ObjectMapper objectMapper;
 
+    BodyAnomalyDetectionService(
+            BodyAnalysisResultRepository repository,
+            ManufacturingEventJsonRepository eventJsonRepository,
+            ObjectMapper objectMapper
+    ) {
+        this(repository, eventJsonRepository, null, objectMapper);
+    }
+
     @Cacheable(
             cacheNames = "body-anomaly-dashboard",
-            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString())"
+            key = "T(java.time.LocalDate).parse(#date?.toString() ?: #from?.toLocalDate()?.toString() ?: #to?.toLocalDate()?.toString() ?: #endAt?.toLocalDate()?.toString() ?: T(java.time.LocalDate).now().toString())"
     )
     public BodyAnomalyDetectionResponse findDashboard(
             LocalDate date,
@@ -355,6 +364,9 @@ public class BodyAnomalyDetectionService {
     }
 
     private Map<String, String> resolveAlertLogNos(List<String> eventIds) {
+        if (alertEventRepository == null) {
+            return Map.of();
+        }
         if (eventIds == null || eventIds.isEmpty()) {
             return Map.of();
         }
@@ -934,6 +946,9 @@ public class BodyAnomalyDetectionService {
     }
 
     private String resolveAlertLogNo(String eventId) {
+        if (alertEventRepository == null || eventId == null || eventId.isBlank()) {
+            return null;
+        }
         return alertEventRepository.findLogNoByEventId(eventId).orElse(null);
     }
 
