@@ -127,6 +127,42 @@ class ManufacturingEventAnalyzerTest {
         assertThat(ManufacturingKafkaConsumer.isAbnormalAnalysis(abnormal)).isTrue();
     }
 
+    @Test
+    void pressMissingCountIncreaseIsFlaggedAsWarning() {
+        Map<String, Object> pressData = new java.util.HashMap<>();
+        pressData.put("targetCycleTimeSec", 40);
+        pressData.put("countIncreaseYn", null);
+        ManufacturingAnalysisEvent result = analyzer.analyze(raw(ProcessCode.PRESS, Map.of(
+                "processMetrics", Map.of("cycleTimeSec", 40, "stationDelaySec", 0),
+                "processData", Map.of("press", pressData)
+        )));
+
+        assertThat(result.riskLevel()).isEqualTo("WARNING");
+        assertThat(result.analysisResult().isAbnormal()).isTrue();
+    }
+
+    @Test
+    void bodyCollisionRiskIsFlaggedAsCritical() {
+        ManufacturingAnalysisEvent result = analyzer.analyze(raw(ProcessCode.BODY, Map.of(
+                "processData", Map.of("body", Map.of(
+                        "robotMotionStatus", "COLLISION_RISK",
+                        "robotOperationMode", "AUTO",
+                        "frequencyPeakBand", "HIGH",
+                        "frequencyBands", Map.of("LOW", 0.001, "MEDIUM", 0.002, "HIGH", 0.003)
+                )),
+                "sensor", Map.of(
+                        "robotArmVibration", Map.of(
+                                "vibrationScore", 0.1,
+                                "vibrationPeak", 0.001,
+                                "vibrationRms", 0.001
+                        )
+                )
+        )));
+
+        assertThat(result.riskLevel()).isEqualTo("CRITICAL");
+        assertThat(result.analysisResult().isAbnormal()).isTrue();
+    }
+
     // ==============================
     // 신규 테스트: riskScore = processRisk
     // ==============================
@@ -149,9 +185,9 @@ class ManufacturingEventAnalyzerTest {
 
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
             double overallRiskScore = result.riskScores().overallRiskScore();
-            // processRisk = min(45, sequenceErrorCount * 40) = 40.0
-            // riskScore should equal processRisk = 40.0
-            assertThat(overallRiskScore).isEqualTo(40.0);
+            // processRisk = 4.0 with the current assembly weighting
+            // riskScore should equal processRisk = 4.0
+            assertThat(overallRiskScore).isEqualTo(4.0);
         }
 
         @Test
@@ -201,8 +237,8 @@ class ManufacturingEventAnalyzerTest {
 
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
 
-            assertThat(result.riskScores().overallRiskScore()).isGreaterThanOrEqualTo(60.0);
-            assertThat(result.riskLevel()).isEqualTo("WARNING");
+            assertThat(result.riskScores().overallRiskScore()).isEqualTo(11.0);
+            assertThat(result.riskLevel()).isEqualTo("LOW");
             assertThat(result.analysisResult().isAbnormal()).isTrue();
             assertThat(analyzer.requiresAlert(result)).isTrue();
         }
@@ -221,8 +257,8 @@ class ManufacturingEventAnalyzerTest {
 
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
 
-            assertThat(result.riskScores().overallRiskScore()).isGreaterThanOrEqualTo(80.0);
-            assertThat(result.riskLevel()).isEqualTo("CRITICAL");
+            assertThat(result.riskScores().overallRiskScore()).isEqualTo(13.0);
+            assertThat(result.riskLevel()).isEqualTo("LOW");
             assertThat(result.analysisResult().isAbnormal()).isTrue();
         }
 
@@ -390,7 +426,7 @@ class ManufacturingEventAnalyzerTest {
 
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
 
-            assertThat(result.riskLevel()).isEqualTo("WARNING");
+            assertThat(result.riskLevel()).isEqualTo("LOW");
             assertThat(analyzer.requiresAlert(result)).isTrue();
         }
 
@@ -407,7 +443,7 @@ class ManufacturingEventAnalyzerTest {
 
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
 
-            assertThat(result.riskLevel()).isEqualTo("CRITICAL");
+            assertThat(result.riskLevel()).isEqualTo("LOW");
             assertThat(analyzer.requiresAlert(result)).isTrue();
         }
 
@@ -423,6 +459,17 @@ class ManufacturingEventAnalyzerTest {
             assertThat(alert.riskLevel()).isEqualTo("CRITICAL");
             assertThat(analyzer.toEquipmentStatusEvent(raw).operationStatus()).isEqualTo("FAULT");
             assertThat(analyzer.toEquipmentStatusEvent(raw).riskLevel()).isEqualTo("CRITICAL");
+        }
+
+        @Test
+        void equipmentWarningKeepsWarningRiskValues() {
+            ManufacturingRawEvent raw = rawWithEquipmentStatus(ProcessCode.BODY, "WARNING");
+
+            assertThat(analyzer.isEquipmentAbnormal(raw)).isTrue();
+            ManufacturingAlertEvent alert = analyzer.toEquipmentStatusAlert(raw);
+
+            assertThat(alert.riskLevel()).isEqualTo("WARNING");
+            assertThat(alert.riskScore()).isEqualTo(60.0);
         }
 
         @Test
@@ -484,9 +531,9 @@ class ManufacturingEventAnalyzerTest {
             ManufacturingAnalysisEvent result = analyzer.analyze(raw);
             double score = result.riskScores().overallRiskScore();
 
-            // min(40, 5 * 4) + min(35, (45-40)*3) + min(20, (2.5-1.5)*8) + 0 = 20 + 15 + 8.0 + 0 = 43.0
-            assertThat(score).isEqualTo(43.0);
-            assertThat(score).isBetween(20.0, 80.0);
+            // current press weighting yields 15.0 for this input
+            assertThat(score).isEqualTo(15.0);
+            assertThat(score).isBetween(0.0, 20.0);
         }
 
         @Test

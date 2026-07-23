@@ -18,9 +18,9 @@ public interface PaintAnalysisResultRepository extends JpaRepository<PaintAnalys
             from PaintAnalysisResult paint
             join fetch paint.analysisResult result
             where result.processCode = com.aims.assembly.domain.enums.ProcessCode.PAINT
-              and (:from is null or result.analyzedAt >= :from)
-              and (:to is null or result.analyzedAt < :to)
-            order by result.analyzedAt asc, result.eventTime asc, result.id asc
+              and (:from is null or result.eventTime >= :from)
+              and (:to is null or result.eventTime < :to)
+            order by result.eventTime desc, result.id desc
             """)
     List<PaintAnalysisResult> findDashboardRows(
             @Param("from") LocalDateTime from,
@@ -29,12 +29,26 @@ public interface PaintAnalysisResultRepository extends JpaRepository<PaintAnalys
     );
 
     @Query("""
-            select result.analyzedAt
+            select paint
+            from PaintAnalysisResult paint
+            join fetch paint.analysisResult result
+            where result.processCode = com.aims.assembly.domain.enums.ProcessCode.PAINT
+              and (:from is null or result.eventTime >= :from)
+              and (:to is null or result.eventTime < :to)
+            order by result.eventTime asc, result.id asc
+            """)
+    List<PaintAnalysisResult> findDashboardSummaryRows(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
+    );
+
+    @Query("""
+            select result.eventTime
             from PaintAnalysisResult paint
             join paint.analysisResult result
             where result.processCode = com.aims.assembly.domain.enums.ProcessCode.PAINT
-              and result.analyzedAt is not null
-            order by result.analyzedAt asc
+              and result.eventTime is not null
+            order by result.eventTime asc
             """)
-    List<LocalDateTime> findDashboardAnalyzedAtValues();
+    List<LocalDateTime> findDashboardEventTimeValues();
 }

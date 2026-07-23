@@ -24,6 +24,8 @@ import org.springframework.test.annotation.Commit;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Collections;
 import java.util.Map;
 
@@ -82,7 +84,7 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
                         "cycleTimeSec", 45.0
                 )
         ));
-        ManufacturingAnalysisEvent analysis = analysisEvent(raw);
+        ManufacturingAnalysisEvent analysis = analysisEvent(raw, raw.eventTime().plusSeconds(3));
 
         // When
         service.save(raw, analysis);
@@ -375,9 +377,10 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
                         "frequencyBands", Map.of("100Hz", 0.2, "200Hz", 0.4)
                 ))
         )), analysisEvent(rawEvent(ProcessCode.BODY, "EVT-INTEG-VERIFY-BODY", Map.of())));
-        service.save(rawEvent(ProcessCode.PRESS, "EVT-INTEG-VERIFY-PRESS", Map.of(
+        ManufacturingRawEvent pressVerify = rawEvent(ProcessCode.PRESS, "EVT-INTEG-VERIFY-PRESS", Map.of(
                 "processData", Map.of("press", Map.of("timestampDelaySec", 3.0))
-        )), analysisEvent(rawEvent(ProcessCode.PRESS, "EVT-INTEG-VERIFY-PRESS", Map.of())));
+        ));
+        service.save(pressVerify, analysisEvent(pressVerify, pressVerify.eventTime().plusSeconds(3)));
 
         entityManager.flush();
 
@@ -398,8 +401,8 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
 
         Map<String, Object> press = queryDetail("press_analysis_result", "EVT-INTEG-VERIFY-PRESS");
         assertThat(((Number) press.get("target_cycle_time_sec")).doubleValue()).isEqualTo(40.0);
-        assertThat(((Number) press.get("actual_cycle_time_sec")).doubleValue()).isEqualTo(43.0);
-        assertThat(((Number) press.get("cycle_time_gap_sec")).doubleValue()).isEqualTo(3.0);
+        assertThat(press.get("actual_cycle_time_sec")).isNull();
+        assertThat(press.get("cycle_time_gap_sec")).isNull();
         assertThat(((Number) press.get("timestamp_delay_sec")).doubleValue()).isEqualTo(3.0);
     }
 
@@ -455,11 +458,15 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
     }
 
     private ManufacturingAnalysisEvent analysisEvent(ManufacturingRawEvent raw) {
+        return analysisEvent(raw, raw.eventTime());
+    }
+
+    private ManufacturingAnalysisEvent analysisEvent(ManufacturingRawEvent raw, LocalDateTime analyzedAt) {
         return new ManufacturingAnalysisEvent(
                 "ANL-100",
                 raw.eventId(),
-                raw.eventTime(),
-                LocalDateTime.now(),
+                offset(raw.eventTime()),
+                offset(analyzedAt),
                 "FAC",
                 "LINE",
                 raw.processCode(),
@@ -480,5 +487,9 @@ class ManufacturingAnalysisResultServiceIntegrationTest {
                 new ManufacturingAnalysisEvent.Reason("Normal", Collections.emptyList()),
                 new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
         );
+    }
+
+    private OffsetDateTime offset(LocalDateTime dateTime) {
+        return dateTime == null ? null : dateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 }

@@ -514,6 +514,7 @@ public class ManufacturingEventJsonRepository {
                         SET dispatch_status = 'READY',
                             updated_at = CURRENT_TIMESTAMP
                         WHERE dispatch_status = 'PENDING'
+                          AND COALESCE(is_sent, 0) = 0
                           AND (car_master_id, process_code) = (
                               SELECT current_event.car_master_id,
                                      CASE current_event.process_code

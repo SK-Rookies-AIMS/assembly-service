@@ -37,6 +37,7 @@ class ExceptionAdviceKafkaTest {
         assertThat(response.getBody()).isInstanceOf(ApiResponse.class);
 
         ApiResponse<?> body = (ApiResponse<?>) response.getBody();
+        assert body != null;
         assertThat(body.getSuccess()).isFalse();
         assertThat(body.getMessage())
                 .isEqualTo(KafkaErrorStatus.MESSAGE_PUBLISH_FAILED.getMessage());

@@ -2,7 +2,7 @@ package com.aims.assembly.kafka.model;
 
 import com.aims.assembly.domain.enums.ProcessCode;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -11,8 +11,8 @@ import java.util.List;
 public record ManufacturingAnalysisEvent(
         String analysisId,
         String eventId,
-        LocalDateTime eventTime,
-        LocalDateTime analyzedAt,
+        OffsetDateTime eventTime,
+        OffsetDateTime analyzedAt,
         String factoryCode,
         String lineCode,
         ProcessCode processCode,
@@ -24,7 +24,7 @@ public record ManufacturingAnalysisEvent(
         Long carMasterId,
         String analysisType,
         RiskScores riskScores,
-        double operationRate,
+        Double operationRate,
         String riskLevel,
         AnalysisResult analysisResult,
         Reason reason,

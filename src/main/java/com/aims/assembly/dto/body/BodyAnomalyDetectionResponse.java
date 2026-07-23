@@ -12,7 +12,10 @@ public record BodyAnomalyDetectionResponse(
         LocalDateTime previousEndAt,
         List<DateOption> dateOptions,
         Metrics metrics,
-        List<ChartPoint> chart,
+        Charts charts,
+        List<FrequencyBandPoint> frequencyChart,
+        List<FrequencyZonePoint> frequencyZoneChart,
+        FrequencyZoneAnalysis frequencyZoneAnalysis,
         AlertPanel alert
 ) {
     public record DateOption(
@@ -21,15 +24,18 @@ public record BodyAnomalyDetectionResponse(
     ) {
     }
 
-    /**
-     * 상단 지표: 로봇 모션 상태, 운전 모드, 진동 점수, 피크 진동값, 전체 위험도
-     */
     public record Metrics(
             String robotMotionStatus,
             String robotOperationMode,
-            Double robotVibrationScore,
-            Double frequencyPeakValue,
+            Double avgRobotVibrationScore,
+            Double avgVibrationPeak,
+            Double avgVibrationRms,
             String frequencyPeakBand,
+            Double avgFrequencyPeakValue,
+            Double vibrationWarningLine,
+            Double vibrationDangerLine,
+            Double peakWarningLine,
+            Double peakDangerLine,
             Double riskScore,
             String riskScoreScale,
             String severity,
@@ -37,24 +43,114 @@ public record BodyAnomalyDetectionResponse(
     ) {
     }
 
-    /**
-     * 그래프 시계열 포인트: 로봇 진동 점수, 위험도, 피크 진동값
-     */
+    public record Charts(
+            RobotMetricChart robotVibration,
+            PeakMetricChart frequencyPeak
+    ) {
+    }
+
+    public record RobotMetricChart(
+            String title,
+            String metricKey,
+            String unit,
+            List<RobotMetricPoint> points
+    ) {
+    }
+
+    public record PeakMetricChart(
+            String title,
+            String metricKey,
+            String unit,
+            List<PeakMetricPoint> points
+    ) {
+    }
+
+    public record RobotMetricPoint(
+            String eventId,
+            String analysisId,
+            String logNo,
+            LocalDateTime timestamp,
+            Double value,
+            Double warningLine,
+            Double dangerLine,
+            Boolean isAbnormal,
+            String severity
+    ) {
+    }
+
+    public record PeakMetricPoint(
+            String eventId,
+            String analysisId,
+            String logNo,
+            LocalDateTime timestamp,
+            Double value,
+            Double secondaryValue,
+            Double warningLine,
+            Double dangerLine,
+            Boolean isAbnormal,
+            String severity
+    ) {
+    }
+
     public record ChartPoint(
             String eventId,
             String analysisId,
+            String logNo,
             LocalDateTime timestamp,
             Double robotVibrationScore,
             Double frequencyPeakValue,
+            Double vibrationPeak,
+            Double vibrationWarningLine,
+            Double vibrationDangerLine,
+            Double peakWarningLine,
+            Double peakDangerLine,
+            Double vibrationRms,
             Double riskScore,
             Boolean isAbnormal,
             String severity
     ) {
     }
 
+    public record FrequencyBandPoint(
+            LocalDateTime timestamp,
+            String band,
+            Double value,
+            Double targetValue,
+            Double warningValue,
+            Double dangerValue
+    ) {
+    }
+
+    public record FrequencyZonePoint(
+            String zone,
+            String range,
+            String description,
+            Double avg,
+            Double max,
+            Double targetValue,
+            Double warningValue,
+            Double dangerValue
+    ) {
+    }
+
+    public record FrequencyZoneAnalysis(
+            ZoneStats zone1,
+            ZoneStats zone2,
+            ZoneStats zone3,
+            ZoneStats zone4,
+            ZoneStats zone5
+    ) {
+        public record ZoneStats(
+                Double avg,
+                Double max
+        ) {
+        }
+    }
+
     public record AlertPanel(
             Boolean detected,
             String title,
+            String logNo,
             List<String> reasons
     ) {
     }

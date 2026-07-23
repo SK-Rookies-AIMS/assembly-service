@@ -24,6 +24,8 @@ import org.mockito.ArgumentCaptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
@@ -127,13 +129,13 @@ class ManufacturingAnalysisResultServiceTest {
         ManufacturingRawEvent press = rawEvent(ProcessCode.PRESS, "EVT-PRESS", Map.of(
                 "processData", Map.of("press", Map.of("timestampDelaySec", 3.0))
         ));
-        service.save(press, analysisEvent(press));
+        service.save(press, analysisEvent(press, press.eventTime().plusSeconds(3)));
         ArgumentCaptor<PressAnalysisResult> pressCaptor =
                 ArgumentCaptor.forClass(PressAnalysisResult.class);
         verify(pressRepository).save(pressCaptor.capture());
         assertThat(pressCaptor.getValue().getTargetCycleTimeSec()).isEqualTo(40.0);
-        assertThat(pressCaptor.getValue().getActualCycleTimeSec()).isEqualTo(43.0);
-        assertThat(pressCaptor.getValue().getCycleTimeGapSec()).isEqualTo(3.0);
+        assertThat(pressCaptor.getValue().getActualCycleTimeSec()).isNull();
+        assertThat(pressCaptor.getValue().getCycleTimeGapSec()).isNull();
         assertThat(pressCaptor.getValue().getTimestampDelaySec()).isEqualTo(3.0);
 
         ManufacturingRawEvent body = rawEvent(ProcessCode.BODY, "EVT-BODY", Map.of(
@@ -259,7 +261,7 @@ class ManufacturingAnalysisResultServiceTest {
                 """
         ));
 
-        service.save(press, analysisEvent(press));
+        service.save(press, analysisEvent(press, press.eventTime().plusSeconds(4)));
 
         ArgumentCaptor<PressAnalysisResult> captor =
                 ArgumentCaptor.forClass(PressAnalysisResult.class);
@@ -269,7 +271,7 @@ class ManufacturingAnalysisResultServiceTest {
         assertThat(detail.getTargetCycleTimeSec()).isEqualTo(12.0);
         assertThat(detail.getActualCycleTimeSec()).isEqualTo(14.6);
         assertThat(detail.getCycleTimeGapSec()).isCloseTo(2.6, within(0.0001));
-        assertThat(detail.getTimestampDelaySec()).isEqualTo(4.2);
+        assertThat(detail.getTimestampDelaySec()).isEqualTo(4.0);
     }
 
     @Test
@@ -327,7 +329,7 @@ class ManufacturingAnalysisResultServiceTest {
         assertThat(pressDetail.getTargetCycleTimeSec()).isEqualTo(40.0);
         assertThat(pressDetail.getActualCycleTimeSec()).isEqualTo(47.5);
         assertThat(pressDetail.getCycleTimeGapSec()).isEqualTo(7.5);
-        assertThat(pressDetail.getTimestampDelaySec()).isEqualTo(7.5);
+        assertThat(pressDetail.getTimestampDelaySec()).isEqualTo(0.0);
 
         ManufacturingRawEvent body = rawEvent(ProcessCode.BODY, "EVT-BODY-FALLBACK", Map.of(
                 "sensor", Map.of(
@@ -382,11 +384,15 @@ class ManufacturingAnalysisResultServiceTest {
     }
 
     private ManufacturingAnalysisEvent analysisEvent(ManufacturingRawEvent raw) {
+        return analysisEvent(raw, raw.eventTime());
+    }
+
+    private ManufacturingAnalysisEvent analysisEvent(ManufacturingRawEvent raw, LocalDateTime analyzedAt) {
         return new ManufacturingAnalysisEvent(
                 "ANL-" + raw.eventId(),
                 raw.eventId(),
-                raw.eventTime(),
-                raw.eventTime(),
+                offset(raw.eventTime()),
+                offset(analyzedAt),
                 "FAC",
                 "LINE",
                 raw.processCode(),
@@ -407,5 +413,215 @@ class ManufacturingAnalysisResultServiceTest {
                 new ManufacturingAnalysisEvent.Reason("Normal", Collections.emptyList()),
                 new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
         );
+    }
+
+    @Test
+    void test1_rawActualSequenceEqualsExpectedSequenceAndAbnormal() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-1", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B03>PA02>A03",
+                                "actualSequence", "P01>B03>PA02>A03"
+                        )
+                )
+        ));
+        ManufacturingAnalysisEvent analysis = new ManufacturingAnalysisEvent(
+                "ANL-1", "EVT-TEST-1", offset(raw.eventTime()), offset(raw.eventTime()),
+                "FAC", "LINE", ProcessCode.ASSEMBLY, "EQ-100", "EQ-NAME", "ROBOT", "PROD", "CAR", raw.carMasterId(),
+                "PROCESS_RISK_ANALYSIS",
+                new ManufacturingAnalysisEvent.RiskScores(0.0, 0.0, 0.0, 0.0, new ManufacturingAnalysisEvent.ProcessRisk(0.0, null, null, null)),
+                90.0, "HIGH",
+                new ManufacturingAnalysisEvent.AnalysisResult(true, false, false, false, false),
+                new ManufacturingAnalysisEvent.Reason("Abnormal", Collections.emptyList()),
+                new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
+        );
+
+        service.save(raw, analysis);
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P01>B03>PA02>A03");
+        assertThat(result.getActualSequence()).isEqualTo("P01>B03>PA02>A03");
+        // 수정 후: sequence가 동일하면 abnormal 여부와 무관하게 sequenceErrorCount = 0
+        assertThat(result.getSequenceErrorCount()).isZero();
+    }
+
+    private OffsetDateTime offset(LocalDateTime dateTime) {
+        return dateTime == null ? null : dateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
+    }
+
+    @Test
+    void test2_rawActualSequenceDiffersFromExpectedSequence() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-2", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B03>PA02>A03",
+                                "actualSequence", "P01>B04>PA02>A03"
+                        )
+                )
+        ));
+
+        service.save(raw, analysisEvent(raw));
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P01>B03>PA02>A03");
+        assertThat(result.getActualSequence()).isEqualTo("P01>B04>PA02>A03");
+    }
+
+    @Test
+    void test3_rawActualSequenceMissing() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-3", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B03>PA02>A03"
+                        )
+                )
+        ));
+
+        service.save(raw, analysisEvent(raw));
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P01>B03>PA02>A03");
+        assertThat(result.getActualSequence()).isNull();
+    }
+
+    @Test
+    void test4_rawExpectedSequenceMissing() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-TEST-4", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "actualSequence", "P01>B04>PA02>A03"
+                        )
+                )
+        ));
+
+        service.save(raw, analysisEvent(raw));
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isNull();
+        assertThat(result.getActualSequence()).isEqualTo("P01>B04>PA02>A03");
+    }
+
+    /**
+     * [핵심 버그 재현]
+     * raw: expectedSequence == actualSequence, 모든 count=0
+     * equipmentStatus=WARNING → analysis.isAbnormal=true
+     * 수정 전: sequenceErrorCount가 합성값(2 등)으로 저장되어 화면에 불일치 발생
+     * 수정 후: sequence가 동일 → sequenceErrorCount=0 으로 저장
+     */
+    @Test
+    void sequenceErrorCount_mustBeZero_whenSequencesMatch_evenIfEquipmentFaultMakesAbnormal() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-20260602-000092", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P05>B05>PA02>A03",
+                                "actualSequence", "P05>B05>PA02>A03",
+                                "sequenceErrorCount", 0,
+                                "missingPartCount", 0,
+                                "fasteningErrorCount", 0
+                        )
+                ),
+                "equipmentStatus", Map.of("operationStatus", "WARNING")
+        ));
+        // equipmentFault=true로 인해 isAbnormal=true
+        ManufacturingAnalysisEvent analysis = new ManufacturingAnalysisEvent(
+                "ANL-92", "EVT-20260602-000092", offset(raw.eventTime()), offset(raw.eventTime()),
+                "FAC", "LINE", ProcessCode.ASSEMBLY, "EQ-200", "EQ-NAME", "ROBOT", "PROD", "CAR", 123L,
+                "PROCESS_RISK_ANALYSIS",
+                new ManufacturingAnalysisEvent.RiskScores(67.0, 0.0, 0.0, 0.0,
+                        new ManufacturingAnalysisEvent.ProcessRisk(null, null, null, 67.0)),
+                67.0, "WARNING",
+                new ManufacturingAnalysisEvent.AnalysisResult(true, false, false, true, false),
+                new ManufacturingAnalysisEvent.Reason("설비 이상", Collections.emptyList()),
+                new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
+        );
+
+        service.save(raw, analysis);
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P05>B05>PA02>A03");
+        assertThat(result.getActualSequence()).isEqualTo("P05>B05>PA02>A03");
+        assertThat(result.getSequenceErrorCount())
+                .as("expected == actual 이면 sequenceErrorCount=0 이어야 한다 (equipmentFault여도)")
+                .isEqualTo(0);
+    }
+
+    /**
+     * sequence가 다를 때 count=0이면 보정값(>0)을 사용해야 한다.
+     */
+    @Test
+    void sequenceErrorCount_mustBePositive_whenSequencesDiffer_andRawCountIsZero() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-DIFF-SEQ", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B04>PA04>A03",
+                                "actualSequence", "P01>PA04>B04>A03",
+                                "sequenceErrorCount", 0,
+                                "missingPartCount", 0,
+                                "fasteningErrorCount", 0
+                        )
+                )
+        ));
+        ManufacturingAnalysisEvent analysis = new ManufacturingAnalysisEvent(
+                "ANL-DIFF", "EVT-DIFF-SEQ", offset(raw.eventTime()), offset(raw.eventTime()),
+                "FAC", "LINE", ProcessCode.ASSEMBLY, "EQ-300", "EQ-NAME", "ROBOT", "PROD", "CAR", 999L,
+                "PROCESS_RISK_ANALYSIS",
+                new ManufacturingAnalysisEvent.RiskScores(65.0, 0.0, 0.0, 0.0,
+                        new ManufacturingAnalysisEvent.ProcessRisk(null, null, null, 65.0)),
+                65.0, "WARNING",
+                new ManufacturingAnalysisEvent.AnalysisResult(true, false, false, false, true),
+                new ManufacturingAnalysisEvent.Reason("순서 오류", Collections.emptyList()),
+                new ManufacturingAnalysisEvent.Recommendation("ACTION", "Message")
+        );
+
+        service.save(raw, analysis);
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getExpectedSequence()).isEqualTo("P01>B04>PA04>A03");
+        assertThat(result.getActualSequence()).isEqualTo("P01>PA04>B04>A03");
+        assertThat(result.getSequenceErrorCount())
+                .as("expected != actual 이면 sequenceErrorCount > 0 이어야 한다")
+                .isGreaterThan(0);
+    }
+
+    /**
+     * raw count가 양수이고 sequence도 다를 때: raw count를 그대로 사용
+     */
+    @Test
+    void sequenceErrorCount_mustUseRawValue_whenSequencesDifferAndRawCountIsPositive() {
+        ManufacturingRawEvent raw = rawEvent(ProcessCode.ASSEMBLY, "EVT-RAW-CNT", Map.of(
+                "processData", Map.of(
+                        "assembly", Map.of(
+                                "expectedSequence", "P01>B04>PA04>A03",
+                                "actualSequence", "P01>PA04>B04>A03",
+                                "sequenceErrorCount", 1,
+                                "missingPartCount", 0,
+                                "fasteningErrorCount", 1
+                        )
+                )
+        ));
+
+        service.save(raw, analysisEvent(raw));
+
+        ArgumentCaptor<AssemblyAnalysisResult> captor = ArgumentCaptor.forClass(AssemblyAnalysisResult.class);
+        verify(assemblyRepository).save(captor.capture());
+        AssemblyAnalysisResult result = captor.getValue();
+        assertThat(result.getSequenceErrorCount())
+                .as("raw sequenceErrorCount=1, sequence 다름 → 원본값 1 유지")
+                .isEqualTo(1);
+        assertThat(result.getFasteningErrorCount())
+                .as("raw fasteningErrorCount=1 그대로")
+                .isEqualTo(1);
     }
 }

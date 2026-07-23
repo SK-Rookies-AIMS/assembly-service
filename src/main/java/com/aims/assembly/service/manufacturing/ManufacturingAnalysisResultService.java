@@ -50,8 +50,8 @@ public class ManufacturingAnalysisResultService {
      */
     @Transactional
     @CacheEvict(cacheNames = {
-            "press-anomaly-dashboard-v2",
-            "body-anomaly-dashboard-v2",
+            "press-anomaly-dashboard",
+            "body-anomaly-dashboard",
             "paint-anomaly-dashboard-v2",
             "process-paint-dashboard-v1",
             "process-assembly-dashboard-v1",
@@ -103,7 +103,7 @@ public class ManufacturingAnalysisResultService {
                         assemblyRiskOverride.severity(),
                         assemblyRiskOverride.riskScore(),
                         analysis.reason() == null ? null : analysis.reason().mainReason(),
-                        analysis.analyzedAt()
+                        analysis.analyzedAt() == null ? null : analysis.analyzedAt().toLocalDateTime()
                 )
         );
 
@@ -173,21 +173,6 @@ public class ManufacturingAnalysisResultService {
                     targetCycleTime = DEFAULT_PRESS_TARGET_CYCLE_TIME_SEC;
                 }
 
-                Double timestampDelaySec = firstDouble(
-                        json,
-                        new String[]{"processData", "press", "timestampDelaySec"},
-                        new String[]{"processMetrics", "stationDelaySec"}
-                );
-                if (timestampDelaySec == null || timestampDelaySec < 0) {
-                    timestampDelaySec = doubleVal(usedFields, "timestampDelaySec");
-                }
-                if (timestampDelaySec == null || timestampDelaySec < 0) {
-                    timestampDelaySec = doubleVal(usedFields, "stationDelaySec");
-                }
-                if (timestampDelaySec == null || timestampDelaySec < 0) {
-                    timestampDelaySec = 0.0;
-                }
-
                 Double actualCycleTime = firstDouble(
                         json,
                         new String[]{"processMetrics", "cycleTimeSec"},
@@ -200,6 +185,9 @@ public class ManufacturingAnalysisResultService {
                 if (actualCycleTime == null || actualCycleTime <= 0) {
                     actualCycleTime = doubleVal(usedFields, "cycleTimeSec");
                 }
+                if (actualCycleTime != null && actualCycleTime <= 0) {
+                    actualCycleTime = null;
+                }
 
                 /*
                  * [FIX]
@@ -210,20 +198,15 @@ public class ManufacturingAnalysisResultService {
                  * 이상 탐지인데 실제값이 target과 같으면 eventId 기반 deterministic 보정값을 부여한다.
                  */
                 boolean pressAbnormal = Boolean.TRUE.equals(savedResult.getIsAbnormal());
-
-                if (pressAbnormal && timestampDelaySec <= 0) {
-                    timestampDelaySec = calculatePressDelaySec(savedResult);
+                Double timestampDelaySec = calculatePressTimestampDelaySec(savedResult);
+                if (timestampDelaySec == null || timestampDelaySec < 0) {
+                    timestampDelaySec = 0.0;
                 }
 
-                if (actualCycleTime == null || actualCycleTime <= 0) {
-                    actualCycleTime = targetCycleTime + timestampDelaySec;
+                Double cycleTimeGapSec = null;
+                if (actualCycleTime != null && targetCycleTime != null) {
+                    cycleTimeGapSec = actualCycleTime - targetCycleTime;
                 }
-
-                if (pressAbnormal && actualCycleTime <= targetCycleTime) {
-                    actualCycleTime = targetCycleTime + timestampDelaySec;
-                }
-
-                double cycleTimeGapSec = actualCycleTime - targetCycleTime;
 
                 log.info("[DETAIL_SAVE][PRESS] resultId={}, eventId={}, abnormal={}, riskScore={}, countIncreaseYn={}, timestampDelaySec={}, targetCycleTime={}, actualCycleTime={}, cycleTimeGap={}",
                         savedResult.getId(),
@@ -730,6 +713,19 @@ public class ManufacturingAnalysisResultService {
         return round3(baseDelay + variation);
     }
 
+    private Double calculatePressTimestampDelaySec(ManufacturingAnalysisResult savedResult) {
+        if (savedResult == null) {
+            return null;
+        }
+        LocalDateTime eventTime = savedResult.getEventTime();
+        LocalDateTime analyzedAt = savedResult.getAnalyzedAt();
+        if (eventTime == null || analyzedAt == null) {
+            return null;
+        }
+        double seconds = java.time.Duration.between(eventTime, analyzedAt).toMillis() / 1000.0;
+        return round3(Math.max(0.0, seconds));
+    }
+
     private double eventIdVariation(String eventId, double min, double max) {
         if (eventId == null || eventId.isBlank()) {
             return min;
@@ -885,15 +881,25 @@ public class ManufacturingAnalysisResultService {
         double riskScore = savedResult.getRiskScore() == null ? 0.0 : savedResult.getRiskScore();
 
         if (expectedSequence == null || isNullText(expectedSequence)) {
-            expectedSequence = "PART_CHECK->FASTENING->TORQUE_CHECK->FINAL_INSPECTION";
+            expectedSequence = null;
         }
+
+        if (actualSequence == null || isNullText(actualSequence)) {
+            actualSequence = null;
+        }
+
+        // sequence가 동일하면 sequenceErrorCount는 반드시 0이어야 한다.
+        // equipmentFault 등 다른 이유로 abnormal이 되어도 순서 오류는 sequence 문자열 기준으로 결정한다.
+        boolean sequencesMatch = expectedSequence != null
+                && expectedSequence.equals(actualSequence);
 
         int seqVariation = eventIdIndex(savedResult.getEventId() + ":assembly:seq", 3);
         int missingVariation = eventIdIndex(savedResult.getEventId() + ":assembly:missing", 3);
         int fasteningVariation = eventIdIndex(savedResult.getEventId() + ":assembly:fastening", 4);
 
         if (assemblyAbnormal) {
-            if (sequenceErrorCount == null || sequenceErrorCount <= 0) {
+            // sequenceError 합성: sequence가 실제로 다를 때만 허용
+            if (!sequencesMatch && (sequenceErrorCount == null || sequenceErrorCount <= 0)) {
                 sequenceErrorCount = riskScore >= 80 ? 2 + seqVariation : 1 + seqVariation;
             }
 
@@ -904,19 +910,15 @@ public class ManufacturingAnalysisResultService {
             if (fasteningErrorCount == null || fasteningErrorCount <= 0) {
                 fasteningErrorCount = riskScore >= 80 ? 2 + fasteningVariation : 1 + fasteningVariation;
             }
-
-            if (actualSequence == null || isNullText(actualSequence)
-                    || actualSequence.equals(expectedSequence)) {
-                actualSequence = resolveAssemblyActualSequence(savedResult);
-            }
         } else {
             if (sequenceErrorCount == null) sequenceErrorCount = 0;
             if (missingPartCount == null) missingPartCount = 0;
             if (fasteningErrorCount == null) fasteningErrorCount = 0;
+        }
 
-            if (actualSequence == null || isNullText(actualSequence)) {
-                actualSequence = expectedSequence;
-            }
+        // 최종 정합성 보정: sequence 문자열이 동일하면 sequenceErrorCount는 0
+        if (sequencesMatch) {
+            sequenceErrorCount = 0;
         }
 
         return new AssemblyCalculatedValues(
@@ -926,16 +928,6 @@ public class ManufacturingAnalysisResultService {
                 Math.max(missingPartCount, 0),
                 Math.max(fasteningErrorCount, 0)
         );
-    }
-
-    private String resolveAssemblyActualSequence(ManufacturingAnalysisResult savedResult) {
-        String[] abnormalSequences = {
-                "PART_CHECK->TORQUE_CHECK->FASTENING->FINAL_INSPECTION",
-                "PART_CHECK->FASTENING->FINAL_INSPECTION",
-                "FASTENING->PART_CHECK->TORQUE_CHECK->FINAL_INSPECTION",
-                "PART_CHECK->FASTENING->TORQUE_RETRY->FINAL_INSPECTION"
-        };
-        return abnormalSequences[eventIdIndex(savedResult.getEventId(), abnormalSequences.length)];
     }
 
     private record AssemblyCalculatedValues(
@@ -981,12 +973,21 @@ public class ManufacturingAnalysisResultService {
                 : intVal(json, "processData", "assembly", "fasteningErrorCount");
 
         // [FIX] 원본 이벤트가 이상(Abnormal)이지만 카운트가 누락된 경우, 보정값을 부여하여 위험도를 재계산한다.
+        // 단, sequenceErrorCount 보정은 expected/actual sequence가 실제로 다를 때만 적용한다.
+        // sequence가 동일한데 equipmentFault 등으로 abnormal이 된 경우 sequence 오류를 부풀리지 않는다.
         if (originalAbnormal && sequenceErrorCount <= 0 && missingPartCount <= 0 && fasteningErrorCount <= 0) {
             int seqVariation = eventIdIndex(analysis.eventId() + ":assembly:seq", 3);
             int missingVariation = eventIdIndex(analysis.eventId() + ":assembly:missing", 3);
             int fasteningVariation = eventIdIndex(analysis.eventId() + ":assembly:fastening", 4);
 
-            sequenceErrorCount = originalRiskScore >= 80 ? 2 + seqVariation : 1 + seqVariation;
+            String expectedSeq = text(json, "processData", "assembly", "expectedSequence");
+            String actualSeq = text(json, "processData", "assembly", "actualSequence");
+            boolean sequencesMatch = expectedSeq != null && expectedSeq.equals(actualSeq);
+
+            // sequence가 다를 때만 sequenceError 보정 적용
+            if (!sequencesMatch) {
+                sequenceErrorCount = originalRiskScore >= 80 ? 2 + seqVariation : 1 + seqVariation;
+            }
             missingPartCount = originalRiskScore >= 70 ? 1 + missingVariation : missingVariation;
             fasteningErrorCount = originalRiskScore >= 80 ? 2 + fasteningVariation : 1 + fasteningVariation;
         }

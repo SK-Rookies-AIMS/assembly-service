@@ -24,10 +24,6 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: ${REDIS_TIMEOUT:3s}
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:6379}
-    timeout: ${REDIS_TIMEOUT:3s}
   web:
     encoding:
       charset: UTF-8
@@ -70,7 +66,7 @@ app:
   datasource:
     main:
       driver-class-name: ${MAIN_DB_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
-      jdbc-url: ${MAIN_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/maindb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8&useSSL=false}
+      jdbc-url: ${MAIN_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/maindb?serverTimezone=Asia/Seoul&sessionVariables=time_zone='%2B09:00'&useUnicode=true&characterEncoding=UTF-8&useSSL=false}
       username: ${MAIN_DB_USERNAME:admin}
       password: ${MAIN_DB_PASSWORD:}
       maximum-pool-size: ${MAIN_DB_MAXIMUM_POOL_SIZE:10}
@@ -78,7 +74,7 @@ app:
       pool-name: ${MAIN_DB_POOL_NAME:main-db-pool}
     sample:
       driver-class-name: ${SAMPLE_DB_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
-      jdbc-url: ${SAMPLE_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/sampledb?serverTimezone=Asia/Seoul&useUnicode=true&characterEncoding=UTF-8&useSSL=false}
+      jdbc-url: ${SAMPLE_DB_JDBC_URL:jdbc:mysql://127.0.0.1:13306/sampledb?serverTimezone=Asia/Seoul&sessionVariables=time_zone='%2B09:00'&useUnicode=true&characterEncoding=UTF-8&useSSL=false}
       username: ${SAMPLE_DB_USERNAME:admin}
       password: ${SAMPLE_DB_PASSWORD:}
       maximum-pool-size: ${SAMPLE_DB_MAXIMUM_POOL_SIZE:5}
@@ -115,7 +111,7 @@ app:
 
 redis:
   cache:
-    ttl: ${REDIS_CACHE_TTL:10m}
+    ttl: ${REDIS_CACHE_TTL:1m}
 
 opensearch:
   scheme: ${OPENSEARCH_SCHEME:http}

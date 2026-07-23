@@ -49,6 +49,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/process/assembly/dates").permitAll()
                         .requestMatchers("/api/process/equipment/operation-rate").permitAll()
                         .requestMatchers("/api/kafka/manufacturing/**").permitAll()
+                        .requestMatchers("/api/internal/**").permitAll()
                         .requestMatchers(
                                 "/",
                                 "/api/process/health",

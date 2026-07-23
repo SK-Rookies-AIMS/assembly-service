@@ -19,10 +19,11 @@ public final class PressAnomalyDetectionResponseMapper {
             LocalDateTime previousEndAt,
             List<PressAnomalyDetectionResponse.DateOption> dateOptions,
             PressAnomalyDetectionResponse.Metrics metrics,
+            PressAnomalyDetectionResponse.Charts charts,
             List<PressAnomalyDetectionResponse.ChartPoint> chart,
             PressAnomalyDetectionResponse.AlertPanel alert
     ) {
-        return new PressAnomalyDetectionResponse(date, from, to, previousEndAt, dateOptions, metrics, chart, alert);
+        return new PressAnomalyDetectionResponse(date, from, to, previousEndAt, dateOptions, metrics, charts, chart, alert);
     }
 
     public static PressAnomalyDetectionResponse.DateOption toDateOption(
@@ -36,6 +37,17 @@ public final class PressAnomalyDetectionResponseMapper {
         return PressAnomalyDetectionResponse.ChartPoint.from(result);
     }
 
+    public static PressAnomalyDetectionResponse.ChartPoint toChartPoint(
+            PressAnalysisResult result,
+            String logNo
+    ) {
+        return PressAnomalyDetectionResponse.ChartPoint.from(
+                result,
+                result.getAnalysisResult().getEventTime(),
+                logNo
+        );
+    }
+
     public static PressAnomalyDetectionResponse.Metrics toMetrics(
             PressAnomalyDetectionResponse.ChartPoint point
     ) {
@@ -45,8 +57,13 @@ public final class PressAnomalyDetectionResponseMapper {
     public static PressAnomalyDetectionResponse.AlertPanel toAlert(
             Boolean detected,
             String title,
+            String logNo,
             List<String> reasons
     ) {
-        return new PressAnomalyDetectionResponse.AlertPanel(detected, title, reasons);
+        return new PressAnomalyDetectionResponse.AlertPanel(detected, title, logNo, reasons);
+    }
+
+    public static PressAnomalyDetectionResponse.Charts toCharts(List<PressAnomalyDetectionResponse.ChartPoint> points) {
+        return PressAnomalyDetectionResponse.chartsFrom(points);
     }
 }

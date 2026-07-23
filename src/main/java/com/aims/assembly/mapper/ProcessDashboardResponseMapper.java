@@ -1,6 +1,5 @@
 package com.aims.assembly.mapper;
 
-import com.aims.assembly.domain.enums.EquipmentOperationStatus;
 import com.aims.assembly.dto.process.AssemblyDashboardResponse;
 import com.aims.assembly.dto.process.EquipmentOperationRateResponse;
 import com.aims.assembly.dto.process.PaintDashboardResponse;
@@ -32,7 +31,7 @@ public final class ProcessDashboardResponseMapper {
             long faultCount,
             long totalCount,
             double operationRate,
-            Map<EquipmentOperationStatus, Long> statusCounts
+            Map<String, Long> statusCounts
     ) {
         return new EquipmentOperationRateResponse.Item(
                 processCode,
@@ -50,11 +49,26 @@ public final class ProcessDashboardResponseMapper {
 
     public static PaintDashboardResponse toPaintDashboardResponse(
             LocalDate selectedDate,
+            LocalDateTime from,
+            LocalDateTime to,
+            LocalDateTime chartStartAt,
+            LocalDateTime chartEndAt,
             PaintDashboardResponse.Summary summary,
-            List<PaintDashboardResponse.ChartPoint> chart,
+            PaintDashboardResponse.Thresholds thresholds,
+            PaintDashboardResponse.Charts charts,
             PaintDashboardResponse.Alert alert
     ) {
-        return new PaintDashboardResponse(selectedDate, summary, chart, alert);
+        return new PaintDashboardResponse(
+                selectedDate,
+                from,
+                to,
+                chartStartAt,
+                chartEndAt,
+                summary,
+                thresholds,
+                charts,
+                alert
+        );
     }
 
     public static PaintDashboardResponse.Summary toPaintSummary(
@@ -66,27 +80,21 @@ public final class ProcessDashboardResponseMapper {
         return new PaintDashboardResponse.Summary(analysisCount, defectRate, averageSurfaceQualityScore, alertCount);
     }
 
-    public static PaintDashboardResponse.ChartPoint toPaintChartPoint(
-            LocalDateTime time,
-            Double defectScore,
-            Double surfaceQualityScore,
-            Double thicknessValue,
-            Double riskScore,
-            String imagePosition,
-            String visionLabel,
-            Double thermalStdTemp,
-            String severity
+    public static PaintDashboardResponse.Summary toPaintSummary(
+            long analysisCount,
+            double averageThicknessValue,
+            double averageSurfaceQualityScore,
+            double defectRate,
+            long alertCount,
+            double averageThermalStdTemp
     ) {
-        return new PaintDashboardResponse.ChartPoint(
-                time,
-                defectScore,
-                surfaceQualityScore,
-                thicknessValue,
-                riskScore,
-                imagePosition,
-                visionLabel,
-                thermalStdTemp,
-                severity
+        return new PaintDashboardResponse.Summary(
+                analysisCount,
+                averageThicknessValue,
+                averageSurfaceQualityScore,
+                defectRate,
+                alertCount,
+                averageThermalStdTemp
         );
     }
 
@@ -94,13 +102,25 @@ public final class ProcessDashboardResponseMapper {
         return new PaintDashboardResponse.Alert(title, messages);
     }
 
+    public static PaintDashboardResponse.Alert toPaintAlert(
+            String title,
+            List<String> messages,
+            PaintDashboardResponse.Alert.Detail detail
+    ) {
+        return new PaintDashboardResponse.Alert(title, messages, detail);
+    }
+
     public static AssemblyDashboardResponse toAssemblyDashboardResponse(
             LocalDate selectedDate,
+            LocalDateTime from,
+            LocalDateTime to,
+            LocalDateTime dataStartAt,
+            LocalDateTime dataEndAt,
             AssemblyDashboardResponse.Summary summary,
             List<AssemblyDashboardResponse.VehicleRow> vehicles,
             AssemblyDashboardResponse.Alert alert
     ) {
-        return new AssemblyDashboardResponse(selectedDate, summary, vehicles, alert);
+        return new AssemblyDashboardResponse(selectedDate, from, to, dataStartAt, dataEndAt, summary, vehicles, alert);
     }
 
     public static AssemblyDashboardResponse.Summary toAssemblySummary(
